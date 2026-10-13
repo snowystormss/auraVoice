@@ -10,6 +10,14 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  splits {
+      abi {
+        isEnable = true
+        reset()
+        include("arm64-v8a", "armeabi-v7a")
+        isUniversalApk = true
+      }
+  }
   defaultConfig {
     applicationId = "com.aistudio.geminivoice.fyzxwb"
     minSdk = 24
@@ -39,7 +47,8 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true    
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }

@@ -1,113 +1,135 @@
 package com.example.engine
 
-import android.content.Context
+import android.content.ComponentCallbacks2
+import android.media.AudioFormat
+import android.os.Process
+import android.speech.tts.SynthesisCallback
+import android.speech.tts.SynthesisRequest
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import android.util.Log
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import android.speech.tts.TextToSpeechService
+import com.example.data.AppDatabase
+import kotlinx.coroutines.runBlocking
 import java.util.Locale
 
-/**
- * Wraps the Android System TextToSpeech engine.
- */
-class SystemTtsEngine(private val context: Context) {
+class SystemTtsEngine : TextToSpeechService() {
 
-    enum class EngineState {
-        UNINITIALIZED,
-        INITIALIZING,
-        READY,
-        ERROR
+    private lateinit var database: AppDatabase
+    private lateinit var onnxEngine: PiperOnnxEngine
+
+    // single pre-allocated buffer reused across all system TTS calls to avoid heap churn
+    private val reusableByteBuffer = ByteArray(4096)
+
+    @Volatile
+    private var isStopped = false
+
+    override fun onCreate() {
+        super.onCreate()
+        database = AppDatabase.getDatabase(applicationContext)
+        onnxEngine = PiperOnnxEngine(applicationContext)
     }
 
-    private val _engineState = MutableStateFlow(EngineState.UNINITIALIZED)
-    val engineState: StateFlow<EngineState> = _engineState.asStateFlow()
-
-    private val _isSpeaking = MutableStateFlow(false)
-    val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
-
-    private var tts: TextToSpeech? = null
-
-    init {
-        initializeTts()
+    override fun onIsLanguageAvailable(lang: String?, country: String?, variant: String?): Int {
+        return TextToSpeech.LANG_AVAILABLE
     }
 
-    private fun initializeTts() {
-        _engineState.value = EngineState.INITIALIZING
-        
-        tts = TextToSpeech(context) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        _isSpeaking.value = true
-                    }
-                    override fun onDone(utteranceId: String?) {
-                        _isSpeaking.value = false
-                    }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        _isSpeaking.value = false
-                        Log.e("SystemTtsEngine", "Inference error on Utterance: $utteranceId")
-                    }
-                })
-                
-                try {
-                    tts?.language = Locale.US
-                } catch (e: Exception) {
-                    Log.e("SystemTtsEngine", "Failed to set default language locale: ${e.message}")
-                }
-                
-                _engineState.value = EngineState.READY
-                Log.d("SystemTtsEngine", "System TTS Engine loaded and READY.")
-            } else {
-                _engineState.value = EngineState.ERROR
-                Log.e("SystemTtsEngine", "Failed to initialize hardware TTS engine.")
-            }
-        }
+    override fun onGetLanguage(): Array<String> {
+        return arrayOf(Locale.US.isO3Language, Locale.US.isO3Country, "")
     }
 
-    fun synthesizeSpeech(
-        text: String,
-        pitch: Float = 1.0f,
-        speechRate: Float = 1.0f,
-        languageCode: String = "en-US"
-    ) {
-        if (_engineState.value != EngineState.READY) {
-            Log.w("SystemTtsEngine", "Engine not ready. Current state: ${_engineState.value}")
+    override fun onLoadLanguage(lang: String?, country: String?, variant: String?): Int {
+        return TextToSpeech.LANG_AVAILABLE
+    }
+
+    override fun onStop() {
+        isStopped = true
+        onnxEngine.stopPlayback()
+    }
+
+    override fun onSynthesizeText(request: SynthesisRequest?, callback: SynthesisCallback?) {
+        if (request == null || callback == null) return
+        val rawText = request.charSequenceText?.toString() ?: return
+        if (rawText.isBlank()) {
+            callback.start(22050, AudioFormat.ENCODING_PCM_16BIT, 1)
+            callback.done()
             return
         }
 
-        try {
-            tts?.setPitch(pitch)
-            tts?.setSpeechRate(speechRate)
+        isStopped = false
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
 
-            val localeTokens = languageCode.split("-", "_")
-            val locale = if (localeTokens.size == 2) {
-                Locale(localeTokens[0], localeTokens[1])
-            } else {
-                Locale(languageCode)
+        val dao = database.voiceProfileDao()
+        val profile = dao.getActiveProfileSync() ?: dao.getFallbackProfileSync()
+        if (profile == null) {
+            callback.error()
+            return
+        }
+
+        // convert system speech rate (100 = 1.0x) into Piper's inverse lengthScale
+        val rateMultiplier = (request.speechRate / 100f).coerceIn(0.5f, 2.5f)
+        val effectiveProfile = profile.copy(
+            lengthScale = (profile.lengthScale / rateMultiplier).coerceIn(0.4f, 2.0f)
+        )
+
+        val modelLoaded = runBlocking {
+            onnxEngine.loadModelIfNeeded(effectiveProfile)
+        }
+        if (!modelLoaded) {
+            callback.error()
+            return
+        }
+
+        callback.start(effectiveProfile.sampleRate, AudioFormat.ENCODING_PCM_16BIT, 1)
+
+        // split long readouts into sentences so first-word latency is near-instant
+        val sentences = TextVoiceParser.cleanForSpeech(rawText)
+            .split(Regex("(?<=[.!?])\\s+"))
+            .filter { it.isNotBlank() }
+
+        val maxChunkBytes = callback.maxBufferSize.coerceAtMost(reusableByteBuffer.size)
+        // ensure even byte count since each 16-bit PCM sample is 2 bytes
+        val safeChunkBytes = maxChunkBytes - (maxChunkBytes % 2)
+        val samplesPerChunk = safeChunkBytes / 2
+
+        for (sentence in sentences) {
+            if (isStopped) break
+
+            val pcmSamples = onnxEngine.synthesizeToPcm(sentence, effectiveProfile)
+            var sampleOffset = 0
+
+            while (sampleOffset < pcmSamples.size && !isStopped) {
+                val count = (pcmSamples.size - sampleOffset).coerceAtMost(samplesPerChunk)
+                var byteIndex = 0
+
+                for (i in 0 until count) {
+                    val sample = pcmSamples[sampleOffset + i].toInt()
+                    reusableByteBuffer[byteIndex++] = (sample and 0xFF).toByte()
+                    reusableByteBuffer[byteIndex++] = ((sample shr 8) and 0xFF).toByte()
+                }
+
+                val status = callback.audioAvailable(reusableByteBuffer, 0, byteIndex)
+                if (status == TextToSpeech.ERROR) {
+                    return
+                }
+                sampleOffset += count
             }
-            tts?.language = locale
+        }
 
-            val params = HashMap<String, String>()
-            params[TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID] = "system_tts_utterance"
-            
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params)
-        } catch (e: Exception) {
-            Log.e("SystemTtsEngine", "Inference failed: ${e.message}")
-            _isSpeaking.value = false
+        if (!isStopped) {
+            callback.done()
         }
     }
 
-    fun stopSynthesis() {
-        tts?.stop()
-        _isSpeaking.value = false
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        ) {
+            onnxEngine.unloadNativeModel()
+        }
     }
 
-    fun shutdown() {
-        tts?.stop()
-        tts?.shutdown()
-        _engineState.value = EngineState.UNINITIALIZED
+    override fun onDestroy() {
+        onnxEngine.release()
+        super.onDestroy()
     }
 }

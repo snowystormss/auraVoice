@@ -3,9 +3,15 @@ package com.example.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -14,17 +20,14 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -38,9 +41,9 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,9 +54,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.StateFlow
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,9 +68,9 @@ fun VoiceStudioScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val audioEnergy by viewModel.audioEnergy.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val haptics = LocalHapticFeedback.current
 
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { msg ->
@@ -75,13 +81,18 @@ fun VoiceStudioScreen(
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                ),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         ReactiveVoiceOrb(
-                            energyProvider = { audioEnergy },
+                            audioEnergyFlow = viewModel.audioEnergy,
                             isSpeaking = uiState.isSpeaking
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -92,7 +103,9 @@ fun VoiceStudioScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = uiState.activeProfile?.name ?: "no onnx model loaded",
+                                text = uiState.activeProfile?.let {
+                                    "${it.name} (${it.sampleRate} hz)"
+                                } ?: "no onnx model loaded",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -106,7 +119,10 @@ fun VoiceStudioScreen(
                         exit = scaleOut(spring(stiffness = Spring.StiffnessMedium)) + fadeOut()
                     ) {
                         FilledTonalIconButton(
-                            onClick = viewModel::stopSpeaking,
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                viewModel.stopSpeaking()
+                            },
                             modifier = Modifier.padding(end = 8.dp)
                         ) {
                             Icon(
@@ -119,16 +135,28 @@ fun VoiceStudioScreen(
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
                 NavigationBarItem(
                     selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
+                    onClick = {
+                        if (selectedTab != 0) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedTab = 0
+                        }
+                    },
                     icon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
                     label = { Text("studio chat") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
+                    onClick = {
+                        if (selectedTab != 1) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedTab = 1
+                        }
+                    },
                     icon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
                     label = { Text("onnx voices") }
                 )
@@ -147,14 +175,14 @@ fun VoiceStudioScreen(
                         dampingRatio = Spring.DampingRatioNoBouncy,
                         stiffness = Spring.StiffnessMediumLow
                     )
-                ) { fullWidth -> direction * (fullWidth / 4) } + fadeIn())
+                ) { fullWidth -> direction * (fullWidth / 5) } + fadeIn())
                     .togetherWith(
                         slideOutHorizontally(
                             animationSpec = spring(
                                 dampingRatio = Spring.DampingRatioNoBouncy,
                                 stiffness = Spring.StiffnessMediumLow
                             )
-                        ) { fullWidth -> -direction * (fullWidth / 4) } + fadeOut()
+                        ) { fullWidth -> -direction * (fullWidth / 5) } + fadeOut()
                     ).using(SizeTransform(clip = false))
             },
             label = "pane_transition"
@@ -179,41 +207,64 @@ fun VoiceStudioScreen(
 
 @Composable
 private fun ReactiveVoiceOrb(
-    energyProvider: () -> Float,
+    audioEnergyFlow: StateFlow<Float>,
     isSpeaking: Boolean
 ) {
-    val smoothedScale by animateFloatAsState(
-        targetValue = if (isSpeaking) 1f + (energyProvider() * 0.45f) else 1f,
+    // Isolated collection: only this tiny leaf node observes the 60Hz audio flow
+    val rawEnergy by audioEnergyFlow.collectAsStateWithLifecycle()
+
+    val smoothedEnergy by animateFloatAsState(
+        targetValue = if (isSpeaking) rawEnergy else 0f,
         animationSpec = spring(
-            dampingRatio = Spring.DampingRatioLowBouncy,
+            dampingRatio = Spring.DampingRatioNoBouncy,
             stiffness = Spring.StiffnessHigh
         ),
-        label = "orb_scale"
+        label = "orb_energy"
+    )
+
+    val infiniteTransition = rememberInfiniteTransition(label = "idle_breath")
+    val idlePulse by infiniteTransition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = 1.06f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "idle_scale"
     )
 
     val primaryColor = MaterialTheme.colorScheme.primary
     val tertiaryColor = MaterialTheme.colorScheme.tertiary
 
     Box(
-        modifier = Modifier.size(36.dp),
+        modifier = Modifier.size(38.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    scaleX = smoothedScale
-                    scaleY = smoothedScale
-                    alpha = if (isSpeaking) 0.9f else 0.35f
+                    val activeScale = if (isSpeaking) 1f + (smoothedEnergy * 0.55f) else idlePulse
+                    scaleX = activeScale
+                    scaleY = activeScale
+                    alpha = if (isSpeaking) 0.95f else 0.45f
                 }
         ) {
+            val baseRadius = size.minDimension / 2f
+            // Outer warm crema halo
             drawCircle(
-                color = tertiaryColor.copy(alpha = 0.35f),
-                radius = size.minDimension / 2f
+                color = tertiaryColor.copy(alpha = 0.28f),
+                radius = baseRadius
             )
+            // Middle caramel ring
+            drawCircle(
+                color = primaryColor.copy(alpha = 0.55f),
+                radius = baseRadius * (0.68f + smoothedEnergy * 0.15f)
+            )
+            // Core espresso/caramel nucleus
             drawCircle(
                 color = primaryColor,
-                radius = size.minDimension / 3.2f
+                radius = baseRadius * 0.42f
             )
         }
     }

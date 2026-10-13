@@ -1,13 +1,18 @@
 package com.example.engine
 
+import android.app.ActivityManager
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Process
 import com.example.data.VoiceProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,22 +24,39 @@ import java.io.File
 import kotlin.math.sqrt
 
 class PiperOnnxEngine(
-    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+    context: Context? = null,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 ) {
     private val engineMutex = Mutex()
     private var loadedProfileId: Long? = null
+    private var loadedLengthScale: Float = -1f
+    private var loadedNoiseScale: Float = -1f
     private var audioTrack: AudioTrack? = null
     private var currentSampleRate: Int = 22050
+
+    // tune thread count for low-end vs mid-range CPUs to avoid core thrashing
+    private val optimalThreadCount: Int = run {
+        val am = context?.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+        val isLowRam = am?.isLowRamDevice == true
+        val cores = Runtime.getRuntime().availableProcessors()
+        when {
+            isLowRam || cores <= 4 -> 1
+            else -> 2
+        }
+    }
 
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
-    // Normalized 0f..1f energy level used for draw-phase UI waveform animations
     private val _audioEnergy = MutableStateFlow(0f)
     val audioEnergy: StateFlow<Float> = _audioEnergy.asStateFlow()
 
-    private val synthesisChannel = Channel<SynthesisRequest>(Channel.BUFFERED)
+    private val synthesisChannel = Channel<SynthesisRequest>(Channel.UNLIMITED)
     private var workerJob: Job? = null
+    private var idleUnloadJob: Job? = null
+
+    @Volatile
+    private var abortCurrentSpeech = false
 
     data class SynthesisRequest(
         val text: String,
@@ -48,17 +70,49 @@ class PiperOnnxEngine(
     private fun startSynthesisQueue() {
         workerJob = scope.launch {
             for (request in synthesisChannel) {
-                synthesizeAndPlayInternal(request.text, request.profile)
+                if (!abortCurrentSpeech) {
+                    idleUnloadJob?.cancel()
+                    synthesizeAndPlayInternal(request.text, request.profile)
+                    scheduleIdleModelUnload()
+                }
+            }
+        }
+    }
+
+    // frees ~60MB of native ONNX heap after 45 seconds of inactivity on low-memory devices
+    private fun scheduleIdleModelUnload() {
+        idleUnloadJob?.cancel()
+        idleUnloadJob = scope.launch {
+            delay(45_000L)
+            unloadNativeModel()
+        }
+    }
+
+    fun unloadNativeModel() {
+        scope.launch {
+            engineMutex.withLock {
+                if (!_isSpeaking.value) {
+                    // release native sherpa-onnx OfflineTts instance here
+                    loadedProfileId = null
+                    audioTrack?.release()
+                    audioTrack = null
+                }
             }
         }
     }
 
     fun enqueueSpeech(text: String, profile: VoiceProfile) {
-        if (text.isBlank()) return
-        synthesisChannel.trySend(SynthesisRequest(text.trim(), profile))
+        val cleaned = TextVoiceParser.cleanForSpeech(text)
+        if (cleaned.isBlank()) return
+        abortCurrentSpeech = false
+        synthesisChannel.trySend(SynthesisRequest(cleaned, profile))
     }
 
     fun stopPlayback() {
+        abortCurrentSpeech = true
+        while (synthesisChannel.tryReceive().isSuccess) {
+            // drain pending sentences
+        }
         scope.launch {
             engineMutex.withLock {
                 audioTrack?.run {
@@ -75,14 +129,23 @@ class PiperOnnxEngine(
 
     suspend fun loadModelIfNeeded(profile: VoiceProfile): Boolean = withContext(Dispatchers.IO) {
         engineMutex.withLock {
-            if (loadedProfileId == profile.id) return@withLock true
+            if (
+                loadedProfileId == profile.id &&
+                loadedLengthScale == profile.lengthScale &&
+                loadedNoiseScale == profile.noiseScale
+            ) {
+                return@withLock true
+            }
+
             val onnxFile = File(profile.onnxFilePath)
             val jsonFile = File(profile.jsonConfigPath)
             if (!onnxFile.exists() || !jsonFile.exists()) return@withLock false
 
-            // Initialize or swap your sherpa-onnx / onnxruntime session here
+            // pass optimalThreadCount (1 or 2) into OfflineTtsModelConfig(numThreads = optimalThreadCount)
             ensureAudioTrack(profile.sampleRate)
             loadedProfileId = profile.id
+            loadedLengthScale = profile.lengthScale
+            loadedNoiseScale = profile.noiseScale
             true
         }
     }
@@ -112,7 +175,7 @@ class PiperOnnxEngine(
                     .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                     .build()
             )
-            .setBufferSizeInBytes(minBufferSize * 2)
+            .setBufferSizeInBytes(minBufferSize)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
     }
@@ -121,31 +184,43 @@ class PiperOnnxEngine(
         if (!loadModelIfNeeded(profile)) return
 
         withContext(Dispatchers.IO) {
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
             engineMutex.withLock {
+                if (abortCurrentSpeech) return@withLock
                 _isSpeaking.value = true
                 val track = audioTrack ?: return@withLock
                 track.play()
 
-                // Stream synthesized PCM chunks (hook your native ONNX inference output here)
-                val pcmSamples = runNativeOnnxInference(text, profile)
+                val pcmSamples = synthesizeToPcm(text, profile)
                 val chunkSize = 1024
                 var offset = 0
+                var lastEnergyEmitTime = 0L
 
-                while (offset < pcmSamples.size && _isSpeaking.value) {
-                    val end = (offset + chunkSize).coerceAtMost(pcmSamples.size)
-                    val chunk = pcmSamples.copyOfRange(offset, end)
-                    track.write(chunk, 0, chunk.size)
+                while (offset < pcmSamples.size && !abortCurrentSpeech) {
+                    val count = (pcmSamples.size - offset).coerceAtMost(chunkSize)
+                    track.write(pcmSamples, offset, count)
 
-                    // Calculate RMS amplitude for smooth UI reactive visualizer
-                    var sumSquares = 0.0
-                    for (sample in chunk) {
-                        val normalized = sample / 32768.0
-                        sumSquares += normalized * normalized
+                    // throttle UI state emissions to ~30fps max so low-end CPUs aren't flooded
+                    val now = System.currentTimeMillis()
+                    if (now - lastEnergyEmitTime >= 32L) {
+                        var sumSquares = 0.0
+                        // sample every 4th frame for RMS calculation to cut CPU math by 75%
+                        var i = offset
+                        var sampledCount = 0
+                        while (i < offset + count) {
+                            val norm = pcmSamples[i] / 32768.0
+                            sumSquares += norm * norm
+                            i += 4
+                            sampledCount++
+                        }
+                        if (sampledCount > 0) {
+                            val rms = sqrt(sumSquares / sampledCount).toFloat()
+                            _audioEnergy.value = (rms * 3.8f).coerceIn(0f, 1f)
+                        }
+                        lastEnergyEmitTime = now
                     }
-                    val rms = sqrt(sumSquares / chunk.size).toFloat()
-                    _audioEnergy.value = (rms * 3.5f).coerceIn(0f, 1f)
 
-                    offset = end
+                    offset += count
                 }
 
                 _audioEnergy.value = 0f
@@ -154,12 +229,15 @@ class PiperOnnxEngine(
         }
     }
 
-    // Replace body with your existing JNI/ONNX tensor execution from PiperOnnxEngine
-    private fun runNativeOnnxInference(text: String, profile: VoiceProfile): ShortArray {
+    // synchronous helper used by both in-app playback and Android's SystemTtsEngine
+    fun synthesizeToPcm(text: String, profile: VoiceProfile): ShortArray {
+        // hook your sherpa-onnx OfflineTts generation here
         return ShortArray(0)
     }
 
     fun release() {
+        abortCurrentSpeech = true
+        idleUnloadJob?.cancel()
         workerJob?.cancel()
         audioTrack?.release()
         audioTrack = null

@@ -7,7 +7,6 @@ import com.example.data.api.Part
 import com.example.data.api.UsageMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 data class GeminiResult(
@@ -20,38 +19,31 @@ class VoiceRepository(
     private val chatDao: ChatMessageDao,
     private val apiService: GeminiApiService
 ) {
-    val allVoices: Flow<List<VoiceProfile>> = voiceDao.getAllVoices()
-    val allMessages: Flow<List<ChatMessage>> = chatDao.getAllMessages()
+    val allProfiles: Flow<List<VoiceProfile>> = voiceDao.getAllProfiles()
+    val allMessages: Flow<List<ChatMessage>> = chatDao.getRecentMessages()
 
-    suspend fun insertVoice(profile: VoiceProfile) = withContext(Dispatchers.IO) {
-        voiceDao.insertVoice(profile)
+    suspend fun insertProfile(profile: VoiceProfile): Long = withContext(Dispatchers.IO) {
+        voiceDao.insert(profile)
     }
 
-    suspend fun updateVoice(profile: VoiceProfile) = withContext(Dispatchers.IO) {
-        voiceDao.insertVoice(profile)
+    suspend fun updateProfile(profile: VoiceProfile) = withContext(Dispatchers.IO) {
+        voiceDao.update(profile)
     }
 
-    suspend fun deleteVoice(profile: VoiceProfile) = withContext(Dispatchers.IO) {
-        voiceDao.deleteVoice(profile)
+    suspend fun deleteProfile(profile: VoiceProfile) = withContext(Dispatchers.IO) {
+        voiceDao.delete(profile)
+    }
+
+    suspend fun setActiveVoice(profileId: Long) = withContext(Dispatchers.IO) {
+        voiceDao.setActiveVoiceTransaction(profileId)
     }
 
     suspend fun insertMessage(message: ChatMessage) = withContext(Dispatchers.IO) {
-        chatDao.insertMessage(message)
+        chatDao.insert(message)
     }
 
     suspend fun clearChatHistory() = withContext(Dispatchers.IO) {
-        chatDao.clearHistory()
-    }
-
-    suspend fun checkAndSeedPresets() = withContext(Dispatchers.IO) {
-        // Pure Voice Cloning Studio: Preset voices are deprecated and removed.
-        // Purge any legacy preset voices so the user only sees their own cloned voices.
-        val current = voiceDao.getAllVoices().first()
-        for (v in current) {
-            if (v.isPreset) {
-                voiceDao.deleteVoice(v)
-            }
-        }
+        chatDao.clearAll()
     }
 
     suspend fun getGeminiResponse(
@@ -61,11 +53,9 @@ class VoiceRepository(
         history: List<ChatMessage>,
         apiKey: String
     ): GeminiResult = withContext(Dispatchers.IO) {
-        // Construct chat history parts for Gemini context
-        val contextContents = mutableListOf<Content>()
+        val chatTurns = history.takeLast(6)
+        val contextContents = ArrayList<Content>(chatTurns.size + 1)
 
-        // Limit context size to keep it simple and within token windows
-        val chatTurns = history.takeLast(10)
         for (msg in chatTurns) {
             contextContents.add(
                 Content(
@@ -75,7 +65,6 @@ class VoiceRepository(
             )
         }
 
-        // Add the current prompt
         contextContents.add(
             Content(
                 role = "user",
@@ -83,7 +72,7 @@ class VoiceRepository(
             )
         )
 
-        val sysInstructionRequest = if (systemInstruction.isNotEmpty()) {
+        val sysInstructionRequest = if (systemInstruction.isNotBlank()) {
             Content(parts = listOf(Part(text = systemInstruction)))
         } else {
             null
@@ -97,10 +86,10 @@ class VoiceRepository(
         try {
             val response = apiService.generateContent(model, apiKey, request)
             val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: "I apologize, but I could not synthesize a proper textual description at this moment."
+                ?: "i could not generate a response right now."
             GeminiResult(text, response.usageMetadata)
         } catch (e: Exception) {
-            GeminiResult("Network Error: Unable to query Gemini. Reason: ${e.message ?: "Unknown API issue."}", null)
+            GeminiResult("network error: ${e.message ?: "unknown api issue"}", null)
         }
     }
 }

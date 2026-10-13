@@ -19,3 +19,9 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# app/proguard-rules.pro
+-keep class com.k2fsa.sherpa.onnx.** { *; }
+-keepclasseswithmembernames class * {
+    native <methods>;
+}

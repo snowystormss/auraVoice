@@ -2,22 +2,25 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// dark mode: cozy dark brown & warm pitch black
+val EspressoBlack = Color(0xFF0C0907)          // deep pOLED-friendly background
+val RoastedBark = Color(0xFF16110D)            // elevated surface / top bar
+val CozyMochaSurface = Color(0xFF211A14)       // cards and chat containers
+val WarmCocoaContainer = Color(0xFF2E241C)     // high-emphasis surface container
+val ToastedCaramel = Color(0xFFD6A271)         // primary accent
+val SoftCinnamon = Color(0xFFC48F61)           // secondary accent
+val AmberCrema = Color(0xFFE5B887)             // tertiary glow / audio orb highlight
+val WarmParchment = Color(0xFFF5EBE1)          // primary readable text
+val MutedLatte = Color(0xFFB8A696)             // secondary / subtitle text
+val DarkWalnutOutline = Color(0xFF423429)      // subtle borders
 
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
-
-// Immersive UI Palette Settings
-val ImmersiveBg = Color(0xFF1C1B1F)
-val ImmersiveText = Color(0xFFE6E1E5)
-val ImmersivePrimary = Color(0xFF8E75FF)
-val ImmersiveAccent = Color(0xFFD0BCFF)
-val ImmersiveDarkPurple = Color(0xFF4F378B)
-val ImmersiveCardBg = Color(0xFF2B2930)
-val ImmersiveCardSecondaryBg = Color(0xFF3B383E)
-val ImmersiveBorder = Color(0xFF49454F)
-val ImmersiveTextSec = Color(0xFFCCC2DC)
-val ImmersiveTextMuted = Color(0xFF938F99)
+// light mode: crisp white & cozy cream
+val AlabasterWhite = Color(0xFFFFFDF9)         // crisp warm white background
+val CozyCreamSurface = Color(0xFFF7F2E7)       // soft cream surface
+val WarmOatContainer = Color(0xFFEDE4D3)       // assistant message bubble / cards
+val RichEspressoPrimary = Color(0xFF5C3A21)    // deep brown primary action
+val ChestnutSecondary = Color(0xFF7A5236)      // secondary brown accent
+val SpicedChaiTertiary = Color(0xFF9C6B43)     // tertiary accent / orb glow
+val DeepRoastText = Color(0xFF21160E)          // crisp dark brown-black text
+val WarmTaupeSubtext = Color(0xFF695647)       // muted brown subtext
+val CreamOutline = Color(0xFFD6C9B8)           // soft cream-taupe border

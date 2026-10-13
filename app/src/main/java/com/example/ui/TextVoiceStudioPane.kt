@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,12 +34,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import com.example.data.ChatMessage
 
@@ -50,10 +55,16 @@ fun TextVoiceStudioPane(
 ) {
     var inputText by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val haptics = LocalHapticFeedback.current
 
-    LaunchedEffect(uiState.messages.size) {
-        if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.lastIndex)
+    val isUserScrolling by remember {
+        derivedStateOf { listState.isScrollInProgress }
+    }
+
+    LaunchedEffect(uiState.messages.size, uiState.streamingReply != null) {
+        val totalItems = uiState.messages.size + (if (uiState.streamingReply != null) 1 else 0)
+        if (totalItems > 0 && !isUserScrolling) {
+            listState.animateScrollToItem(totalItems - 1)
         }
     }
 
@@ -67,16 +78,20 @@ fun TextVoiceStudioPane(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items(
                 items = uiState.messages,
-                key = { it.id }
+                key = { it.id },
+                contentType = { if (it.isUser) "user_msg" else "bot_msg" }
             ) { msg ->
                 ChatBubble(
                     message = msg,
-                    onReplayAudio = { onSpeakMessage(msg.text) },
+                    onReplayAudio = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSpeakMessage(msg.text)
+                    },
                     modifier = Modifier.animateItem(
                         fadeInSpec = spring(stiffness = Spring.StiffnessMediumLow),
                         placementSpec = spring(
@@ -86,11 +101,27 @@ fun TextVoiceStudioPane(
                     )
                 )
             }
+
+            val liveText = uiState.streamingReply
+            if (liveText != null && liveText.isNotEmpty()) {
+                item(key = "streaming_live_bubble", contentType = "streaming_msg") {
+                    ChatBubble(
+                        message = ChatMessage(
+                            id = -1L,
+                            text = liveText,
+                            isUser = false
+                        ),
+                        onReplayAudio = {},
+                        isStreaming = true
+                    )
+                }
+            }
         }
 
         AnimatedVisibility(
             visible = uiState.isGenerating,
-            enter = slideInVertically { it / 2 } + fadeIn()
+            enter = slideInVertically { it / 2 } + fadeIn(),
+            exit = fadeOut()
         ) {
             Row(
                 modifier = Modifier
@@ -99,12 +130,13 @@ fun TextVoiceStudioPane(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(16.dp),
-                    strokeWidth = 2.dp
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "streaming response to piper onnx...",
+                    text = "synthesizing stream...",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -112,6 +144,7 @@ fun TextVoiceStudioPane(
         }
 
         Surface(
+            color = MaterialTheme.colorScheme.surface,
             tonalElevation = 2.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -134,6 +167,7 @@ fun TextVoiceStudioPane(
                     onClick = {
                         val prompt = inputText.trim()
                         if (prompt.isNotEmpty()) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onSendPrompt(prompt)
                             inputText = ""
                         }
@@ -154,7 +188,8 @@ fun TextVoiceStudioPane(
 private fun ChatBubble(
     message: ChatMessage,
     onReplayAudio: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isStreaming: Boolean = false
 ) {
     val isUser = message.isUser
     Row(
@@ -165,18 +200,23 @@ private fun ChatBubble(
             color = if (isUser) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceContainerHigh
+                MaterialTheme.colorScheme.surfaceContainer
+            },
+            contentColor = if (isUser) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface
             },
             shape = RoundedCornerShape(
-                topStart = 18.dp,
-                topEnd = 18.dp,
-                bottomStart = if (isUser) 18.dp else 4.dp,
-                bottomEnd = if (isUser) 4.dp else 18.dp
+                topStart = 20.dp,
+                topEnd = 20.dp,
+                bottomStart = if (isUser) 20.dp else 6.dp,
+                bottomEnd = if (isUser) 6.dp else 20.dp
             ),
-            modifier = Modifier.fillMaxWidth(0.85f)
+            modifier = Modifier.fillMaxWidth(0.86f)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -184,15 +224,18 @@ private fun ChatBubble(
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(
-                    onClick = onReplayAudio,
-                    modifier = Modifier.size(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.VolumeUp,
-                        contentDescription = "speak with active onnx model",
-                        modifier = Modifier.size(18.dp)
-                    )
+                if (!isStreaming) {
+                    IconButton(
+                        onClick = onReplayAudio,
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.VolumeUp,
+                            contentDescription = "speak with active onnx model",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }

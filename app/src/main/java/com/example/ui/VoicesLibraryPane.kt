@@ -1,1073 +1,370 @@
 package com.example.ui
 
-import android.content.Intent
+import android.content.Context
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
-import androidx.compose.foundation.background
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.FilePresent
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.data.VoiceProfile
-import com.example.engine.LanguageCorpusRegistry
-import com.example.engine.LanguageInfo
-import com.example.engine.VoiceModelExporter
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoicesLibraryPane(
-    viewModel: VoiceViewModel,
-    modifier: Modifier = Modifier
+    profiles: List<VoiceProfile>,
+    onImportVoice: (Context, String, Uri, Uri) -> Unit,
+    onSelectVoice: (VoiceProfile) -> Unit,
+    onUpdateParameters: (VoiceProfile, Float, Float, Int) -> Unit,
+    onDeleteVoice: (VoiceProfile) -> Unit
 ) {
     val context = LocalContext.current
-    val allVoices by viewModel.allVoices.collectAsState()
-    val userVoices = remember(allVoices) { allVoices.filter { !it.isPreset } }
-    val isSpeaking by viewModel.isSpeaking.collectAsState()
-    val isExporting by viewModel.isExportingVoice.collectAsState()
-    val exportMessage by viewModel.exportMessage.collectAsState()
-    val exportedResult by viewModel.exportedResult.collectAsState()
+    val haptics = LocalHapticFeedback.current
+    var showImportSheet by rememberSaveable { mutableStateOf(false) }
 
-    var filterCategory by remember { mutableStateOf("ALL") } // "ALL", "CLONED", "TEXT"
-    var voiceToDelete by remember { mutableStateOf<VoiceProfile?>(null) }
-    var voiceToExport by remember { mutableStateOf<VoiceProfile?>(null) }
-    var voiceToChangeLanguage by remember { mutableStateOf<VoiceProfile?>(null) }
-    var showExportSuccessDialog by remember { mutableStateOf(false) }
-    var playingVoiceId by remember { mutableStateOf<Int?>(null) }
-
-    // System Documents "Create Document" SAF Launcher for backing up .zip file to local storage
-    val createZipFileLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/zip")
-    ) { uri ->
-        if (uri != null) {
-            viewModel.saveExportedZipToUri(uri) {
-                // Done saving
-            }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    showImportSheet = true
+                },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                icon = { Icon(Icons.Rounded.Add, contentDescription = null) },
+                text = { Text("load .onnx voice") }
+            )
         }
-    }
-
-    val filteredVoices = remember(userVoices, filterCategory) {
-        when (filterCategory) {
-            "CLONED" -> userVoices.filter { it.modelType == "PIPER_ONNX" || it.isTrained }
-            "TEXT" -> userVoices.filter { it.modelType != "PIPER_ONNX" && !it.isTrained }
-            else -> userVoices
-        }
-    }
-
-    Box(modifier = modifier.fillMaxSize()) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .testTag("voices_library_screen"),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Library Hero Header
-        item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
-                ),
-                modifier = Modifier.fillMaxWidth()
+    ) { padding ->
+        if (profiles.isEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(32.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.FolderShared,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onTertiary,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                        }
-                        Column {
-                            Text(
-                                text = "Voices Library",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "${userVoices.size} personal voice models ready for on-device synthesis",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Export Banner if notification is active
-        exportMessage?.let { msg ->
-            item {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("library_export_banner")
-                ) {
-                        Row(
-                            modifier = Modifier
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
-                                .fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = msg,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(
-                                onClick = { viewModel.dismissExportNotification() },
-                                modifier = Modifier.size(28.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Dismiss",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Filter Chips Row
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                FilterChip(
-                    selected = filterCategory == "ALL",
-                    onClick = { filterCategory = "ALL" },
-                    label = { Text("All (${userVoices.size})") }
+                Text(
+                    text = "no piper .onnx models loaded",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
-                FilterChip(
-                    selected = filterCategory == "CLONED",
-                    onClick = { filterCategory = "CLONED" },
-                    label = { Text("Audio Clones (${userVoices.count { it.modelType == "PIPER_ONNX" || it.isTrained }})") },
-                    leadingIcon = {
-                        Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(14.dp))
-                    }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "tap 'load .onnx voice' to import a piper .onnx model file and its matching .onnx.json config from your phone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                FilterChip(
-                    selected = filterCategory == "TEXT",
-                    onClick = { filterCategory = "TEXT" },
-                    label = { Text("Text Crafted (${userVoices.count { it.modelType != "PIPER_ONNX" && !it.isTrained }})") },
-                    leadingIcon = {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
-                    }
-                )
-            }
-        }
-
-        // Empty state
-        if (filteredVoices.isEmpty()) {
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 24.dp)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(28.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.GraphicEq,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Text(
-                            text = if (filterCategory == "ALL") "No Voices Found" else "No $filterCategory Voices Found",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Record reference audio in Voice Cloner or describe a new voice in Text Studio to create one.",
-                            style = MaterialTheme.typography.bodySmall,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            FilledTonalButton(
-                                onClick = { viewModel.selectTab(VoiceViewModel.StudioTab.CLONER) }
-                            ) {
-                                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Go to Cloner")
-                            }
-                            Button(
-                                onClick = { viewModel.selectTab(VoiceViewModel.StudioTab.TEXT_STUDIO) }
-                            ) {
-                                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Go to Text Studio")
-                            }
-                        }
-                    }
-                }
             }
         } else {
-            // Voices Cards
-            items(filteredVoices, key = { it.id }) { voice ->
-                VoiceLibraryCard(
-                    voice = voice,
-                    isPlaying = isSpeaking && playingVoiceId == voice.id,
-                    onPlay = { text ->
-                        playingVoiceId = voice.id
-                        viewModel.speakText(text, voice)
-                    },
-                    onStop = {
-                        viewModel.stopSpeaking()
-                        playingVoiceId = null
-                    },
-                    onDelete = { voiceToDelete = voice },
-                    onEditInStudio = { viewModel.editVoiceInStudio(voice) },
-                    onExportZip = {
-                        voiceToExport = voice
-                        viewModel.exportVoiceModel(voice) { result ->
-                            showExportSuccessDialog = true
-                        }
-                    },
-                    onChangeLanguage = { voiceToChangeLanguage = voice },
-                    onRefine = { refinementText ->
-                        viewModel.refineSavedVoiceWithText(voice, refinementText)
-                    }
-                )
-            }
-        }
-    }
-
-    // Exporting progress indicator overlay
-    if (isExporting) {
-        Surface(
-            color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(24.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                        Column {
-                            Text(
-                                text = "Compressing Voice Model...",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Packaging ONNX weights, configs, and manifest into ZIP",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentPadding = PaddingValues(16.dp, 16.dp, 16.dp, 96.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(
+                    items = profiles,
+                    key = { it.id },
+                    contentType = { "voice_card" }
+                ) { profile ->
+                    OnnxVoiceCard(
+                        profile = profile,
+                        onSelect = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSelectVoice(profile)
+                        },
+                        onUpdateParams = { length, noise, speaker ->
+                            onUpdateParameters(profile, length, noise, speaker)
+                        },
+                        onDelete = { onDeleteVoice(profile) },
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            placementSpec = spring(
+                                dampingRatio = Spring.DampingRatioLowBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            ),
+                            fadeOutSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                        )
+                    )
                 }
             }
         }
     }
 
-    // Export Confirmation & Share Dialog
-    if (showExportSuccessDialog && exportedResult != null && voiceToExport != null) {
-        val result = exportedResult!!
-        val voice = voiceToExport!!
-
-        AlertDialog(
-            onDismissRequest = {
-                showExportSuccessDialog = false
-                voiceToExport = null
-            },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Archive,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(32.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = "Export Voice Model Package",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        text = "\"${voice.name}\" was successfully compressed into a standardized ZIP archive ready for backup or sharing.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                text = "File: ${result.fileName}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Archive Size: ${VoiceModelExporter.formatFileSize(result.zipSizeBytes)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = "Contents: ${result.entryCount} files (model.onnx, configs, manifest)",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = "Choose an action below to share via Android share sheet or save directly to your Files app:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // Save to Disk via Storage Access Framework
-                    OutlinedButton(
-                        onClick = {
-                            createZipFileLauncher.launch(result.fileName)
-                            showExportSuccessDialog = false
-                            voiceToExport = null
-                        },
-                        modifier = Modifier.testTag("export_save_to_disk_btn")
-                    ) {
-                        Icon(Icons.Default.SaveAlt, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Save to Files")
-                    }
-
-                    // Share via System Intent
-                    Button(
-                        onClick = {
-                            val shareIntent = VoiceModelExporter.createShareIntent(
-                                context = context,
-                                result = result,
-                                voiceName = voice.name
-                            )
-                            context.startActivity(Intent.createChooser(shareIntent, "Share Voice Model ZIP"))
-                            showExportSuccessDialog = false
-                            voiceToExport = null
-                        },
-                        modifier = Modifier.testTag("export_share_sheet_btn")
-                    ) {
-                        Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Share")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showExportSuccessDialog = false
-                        voiceToExport = null
-                    }
-                ) {
-                    Text("Close")
-                }
-            }
-        )
-    }
-
-    // Delete Voice Confirmation Dialog
-    voiceToDelete?.let { voice ->
-        AlertDialog(
-            onDismissRequest = { voiceToDelete = null },
-            icon = {
-                Icon(Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-            },
-            title = { Text("Delete Voice Model?") },
-            text = {
-                Text("Are you sure you want to delete \"${voice.name}\"? This action cannot be undone.")
-            },
-            confirmButton = {
-                Button(
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    onClick = {
-                        viewModel.deleteVoice(voice)
-                        voiceToDelete = null
-                    },
-                    modifier = Modifier.testTag("confirm_delete_voice_btn")
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { voiceToDelete = null }) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-
-    // Change Language & Corpus Dialog
-    voiceToChangeLanguage?.let { voice ->
-        ChangeLanguageDialog(
-            voice = voice,
-            onDismiss = { voiceToChangeLanguage = null },
-            onQuickSwitch = { selectedLang ->
-                viewModel.updateVoiceLanguage(voice, selectedLang)
-                voiceToChangeLanguage = null
-            },
-            onRetrainCorpus = { selectedLang ->
-                viewModel.startLanguageRetraining(voice, selectedLang)
-                voiceToChangeLanguage = null
+    if (showImportSheet) {
+        ImportOnnxBottomSheet(
+            onDismiss = { showImportSheet = false },
+            onConfirmImport = { name, onnxUri, jsonUri ->
+                onImportVoice(context, name, onnxUri, jsonUri)
+                showImportSheet = false
             }
         )
     }
 }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun VoiceLibraryCard(
-    voice: VoiceProfile,
-    isPlaying: Boolean,
-    onPlay: (String) -> Unit,
-    onStop: () -> Unit,
+private fun OnnxVoiceCard(
+    profile: VoiceProfile,
+    onSelect: () -> Unit,
+    onUpdateParams: (Float, Float, Int) -> Unit,
     onDelete: () -> Unit,
-    onEditInStudio: () -> Unit,
-    onExportZip: () -> Unit,
-    onChangeLanguage: () -> Unit,
-    onRefine: (String) -> Unit
+    modifier: Modifier = Modifier
 ) {
-    val isClonedModel = voice.modelType == "PIPER_ONNX" || voice.isTrained
-    val currentLang = remember(voice.languageCode) {
-        LanguageCorpusRegistry.getByCode(voice.languageCode)
-    }
-    var testPromptText by remember(voice.id, voice.languageCode) {
-        mutableStateOf(currentLang.samplePhrases.firstOrNull() ?: "Hello! This is my on-device voice.")
-    }
-    var isRefineExpanded by remember { mutableStateOf(false) }
-    var refineInstructionInput by remember { mutableStateOf("") }
-    var menuExpanded by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var lengthScale by remember(profile.lengthScale) { mutableFloatStateOf(profile.lengthScale) }
+    var noiseScale by remember(profile.noiseScale) { mutableFloatStateOf(profile.noiseScale) }
+    var speakerId by remember(profile.speakerId) { mutableIntStateOf(profile.speakerId) }
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        ),
-        modifier = Modifier
+    val borderColor by animateColorAsState(
+        targetValue = if (profile.isActiveSystemVoice) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        },
+        label = "card_border"
+    )
+
+    OutlinedCard(
+        onClick = onSelect,
+        modifier = modifier
             .fillMaxWidth()
-            .testTag("library_voice_card_${voice.id}")
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ),
+        border = BorderStroke(if (profile.isActiveSystemVoice) 2.dp else 1.dp, borderColor),
+        colors = CardDefaults.outlinedCardColors(
+            containerColor = if (profile.isActiveSystemVoice) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainer
+            }
+        )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            // Header Row: Avatar, Name, Badges, 3-Dots Menu
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = if (isClonedModel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(42.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = if (isClonedModel) Icons.Default.GraphicEq else Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = voice.name,
+                            text = profile.name,
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            fontWeight = FontWeight.Bold
                         )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = if (isClonedModel) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer
-                            ) {
-                                Text(
-                                    text = if (isClonedModel) "PIPER ONNX CLONE" else "TEXT CRAFTED",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-
-                            // Language Badge (Strictly no emojis)
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.tertiaryContainer
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Translate,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        modifier = Modifier.size(10.dp)
-                                    )
-                                    Text(
-                                        text = "${currentLang.shortCode} • ${currentLang.displayName}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                                    )
-                                }
-                            }
-
-                            Text(
-                                text = "Pitch: ${String.format("%.2f", voice.pitch)}x • Rate: ${String.format("%.2f", voice.speechRate)}x",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                // 3-Dots Overflow Menu
-                Box {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
-                        shape = CircleShape,
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        IconButton(
-                            onClick = { menuExpanded = true },
-                            modifier = Modifier.testTag("voice_menu_btn_${voice.id}")
-                        ) {
+                        if (profile.isActiveSystemVoice) {
                             Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Actions for ${voice.name}",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = "active voice",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(start = 8.dp)
                             )
                         }
                     }
-
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                        modifier = Modifier.testTag("voice_menu_dropdown_${voice.id}")
-                    ) {
-                        // Change / Train Language
-                        DropdownMenuItem(
-                            text = { Text("Change / Train Language") },
-                            onClick = {
-                                menuExpanded = false
-                                onChangeLanguage()
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Translate,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            modifier = Modifier.testTag("menu_change_language_${voice.id}")
-                        )
-
-                        // Edit in Studio
-                        DropdownMenuItem(
-                            text = { Text("Edit in Studio") },
-                            onClick = {
-                                menuExpanded = false
-                                onEditInStudio()
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Edit,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.secondary
-                                )
-                            },
-                            modifier = Modifier.testTag("menu_edit_studio_${voice.id}")
-                        )
-
-                        // Export ZIP
-                        DropdownMenuItem(
-                            text = { Text("Export ZIP") },
-                            onClick = {
-                                menuExpanded = false
-                                onExportZip()
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Archive,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            },
-                            modifier = Modifier.testTag("menu_export_zip_${voice.id}")
-                        )
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                        // Delete Model
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = "Delete Model",
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            },
-                            onClick = {
-                                menuExpanded = false
-                                onDelete()
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.DeleteOutline,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            },
-                            modifier = Modifier.testTag("menu_delete_voice_${voice.id}")
-                        )
-                    }
-                }
-            }
-
-            // Description
-            if (voice.description.isNotBlank()) {
-                Text(
-                    text = voice.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            // Inline Test Speech Bar with Multilingual Sample Phrases
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
                     Text(
-                        text = "Quick Speech Test (${currentLang.displayName})",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        text = "${profile.sampleRate} hz - speaker #${profile.speakerId}",
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        text = "Tap phrase below to load",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.primary
-                    )
                 }
 
-                // Sample phrase quick selection chips
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    items(currentLang.samplePhrases) { phrase ->
-                        SuggestionChip(
-                            onClick = { testPromptText = phrase },
-                            label = {
-                                Text(
-                                    text = phrase,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            }
-                        )
+                Row {
+                    IconButton(onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        expanded = !expanded
+                    }) {
+                        Icon(Icons.Rounded.Tune, contentDescription = "tune onnx parameters")
                     }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = testPromptText,
-                        onValueChange = { testPromptText = it },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("library_test_prompt_input_${voice.id}"),
-                        singleLine = true,
-                        shape = RoundedCornerShape(10.dp)
-                    )
-
-                    FilledIconButton(
-                        onClick = {
-                            if (isPlaying) onStop() else onPlay(testPromptText)
-                        },
-                        modifier = Modifier.testTag("library_play_btn_${voice.id}")
-                    ) {
+                    IconButton(onClick = onDelete) {
                         Icon(
-                            imageVector = if (isPlaying) Icons.Default.Close else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Stop" else "Speak"
+                            Icons.Rounded.DeleteOutline,
+                            contentDescription = "delete voice",
+                            tint = MaterialTheme.colorScheme.error
                         )
                     }
                 }
             }
 
-            // Expandable Text Fine-Tuning Drawer
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
                 ) {
-                    TextButton(
-                        onClick = { isRefineExpanded = !isRefineExpanded },
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isRefineExpanded) Icons.Default.ExpandLess else Icons.Default.Tune,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = if (isRefineExpanded) "Hide Text Fine-Tuner" else "Fine-Tune Voice via Text",
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                }
+                    Text(
+                        text = String.format(Locale.US, "pace (length scale): %.2fx", lengthScale),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Slider(
+                        value = lengthScale,
+                        onValueChange = { lengthScale = it },
+                        onValueChangeFinished = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onUpdateParams(lengthScale, noiseScale, speakerId)
+                        },
+                        valueRange = 0.5f..2.0f
+                    )
 
-                AnimatedVisibility(
-                    visible = isRefineExpanded,
-                    enter = expandVertically() + fadeIn(),
-                    exit = shrinkVertically() + fadeOut()
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Text(
-                                text = "Apply Text Instructions to Adjust this Model:",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
-                            // Quick adjustment pills
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(listOf("Make deeper", "Higher pitch", "Speak slower", "Speak faster", "More cheerful", "More formal")) { pill ->
-                                    SuggestionChip(
-                                        onClick = {
-                                            refineInstructionInput = pill
-                                            onRefine(pill)
-                                        },
-                                        label = { Text(pill, style = MaterialTheme.typography.labelSmall) }
-                                    )
-                                }
-                            }
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = refineInstructionInput,
-                                    onValueChange = { refineInstructionInput = it },
-                                    placeholder = { Text("e.g. Lower pitch, sound calmer") },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("refine_input_${voice.id}"),
-                                    shape = RoundedCornerShape(10.dp),
-                                    singleLine = true
-                                )
-
-                                FilledTonalButton(
-                                    onClick = {
-                                        if (refineInstructionInput.isNotBlank()) {
-                                            onRefine(refineInstructionInput)
-                                            refineInstructionInput = ""
-                                        }
-                                    },
-                                    modifier = Modifier.testTag("library_apply_refine_btn_${voice.id}"),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Text("Apply")
-                                }
-                            }
-                        }
-                    }
+                    Text(
+                        text = String.format(Locale.US, "expressiveness (noise scale): %.2f", noiseScale),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Slider(
+                        value = noiseScale,
+                        onValueChange = { noiseScale = it },
+                        onValueChangeFinished = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onUpdateParams(lengthScale, noiseScale, speakerId)
+                        },
+                        valueRange = 0.1f..1.2f
+                    )
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChangeLanguageDialog(
-    voice: VoiceProfile,
+private fun ImportOnnxBottomSheet(
     onDismiss: () -> Unit,
-    onQuickSwitch: (LanguageInfo) -> Unit,
-    onRetrainCorpus: (LanguageInfo) -> Unit
+    onConfirmImport: (String, Uri, Uri) -> Unit
 ) {
-    var selectedLanguage by remember {
-        mutableStateOf(LanguageCorpusRegistry.getByCode(voice.languageCode))
-    }
+    var voiceName by rememberSaveable { mutableStateOf("") }
+    var onnxUri by remember { mutableStateOf<Uri?>(null) }
+    var jsonUri by remember { mutableStateOf<Uri?>(null) }
 
-    AlertDialog(
+    val onnxPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri -> onnxUri = uri }
+
+    val jsonPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri -> jsonUri = uri }
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        icon = {
-            Icon(
-                imageVector = Icons.Default.Translate,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "import piper .onnx voice",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
             )
-        },
-        title = {
-            Column {
-                Text(
-                    text = "Change Voice Language",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Model: ${voice.name}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+
+            OutlinedTextField(
+                value = voiceName,
+                onValueChange = { voiceName = it },
+                label = { Text("voice display name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            OutlinedButton(
+                onClick = { onnxPicker.launch(arrayOf("*/*")) },
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = "Select a target language to adapt phoneme alignment and acoustic prosody:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(
+                    imageVector = if (onnxUri != null) Icons.Rounded.CheckCircle else Icons.Rounded.FilePresent,
+                    contentDescription = null
                 )
-
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 260.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(LanguageCorpusRegistry.supportedLanguages, key = { it.code }) { lang ->
-                        val isSelected = selectedLanguage.code == lang.code
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { selectedLanguage = lang }
-                                .testTag("select_lang_${lang.shortCode.lowercase()}")
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
-                                    modifier = Modifier.size(32.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = lang.shortCode,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = lang.displayName,
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(
-                                            text = "(${lang.nativeName})",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Text(
-                                        text = lang.corpusName,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "Selected",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Sample phrase preview card
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "Sample Sentence (${selectedLanguage.displayName}):",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = selectedLanguage.previewSentence,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (onnxUri != null) ".onnx model selected" else "1. select .onnx model file")
             }
-        },
-        confirmButton = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+
+            OutlinedButton(
+                onClick = { jsonPicker.launch(arrayOf("application/json", "*/*")) },
+                modifier = Modifier.fillMaxWidth()
             ) {
-                // Quick Switch Button
-                OutlinedButton(
-                    onClick = { onQuickSwitch(selectedLanguage) },
-                    modifier = Modifier.testTag("quick_switch_lang_btn")
-                ) {
-                    Icon(Icons.Default.SwapHoriz, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Quick Switch")
-                }
-
-                // Retrain on Corpus Button
-                Button(
-                    onClick = { onRetrainCorpus(selectedLanguage) },
-                    modifier = Modifier.testTag("retrain_corpus_btn")
-                ) {
-                    Icon(Icons.Default.School, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Train Corpus")
-                }
+                Icon(
+                    imageVector = if (jsonUri != null) Icons.Rounded.CheckCircle else Icons.Rounded.FilePresent,
+                    contentDescription = null
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(if (jsonUri != null) ".onnx.json config selected" else "2. select .onnx.json config file")
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
+
+            Button(
+                onClick = {
+                    val mUri = onnxUri
+                    val cUri = jsonUri
+                    if (mUri != null && cUri != null) {
+                        onConfirmImport(voiceName.ifBlank { "custom piper voice" }, mUri, cUri)
+                    }
+                },
+                enabled = onnxUri != null && jsonUri != null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 24.dp)
+            ) {
+                Text("import into engine")
             }
         }
-    )
+    }
 }
