@@ -5,46 +5,37 @@ import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
-interface ChatMessageDao {
+interface VoiceProfileDao {
 
-    @Query("SELECT * FROM chat_sessions ORDER BY updatedAt DESC")
-    fun getAllSessions(): Flow<List<ChatSession>>
+    @Query("SELECT * FROM voice_profiles ORDER BY addedTimestamp DESC")
+    fun getAllProfiles(): Flow<List<VoiceProfile>>
 
-    // searches both session titles and message contents inside SQLite without loading everything into RAM
-    @Query("""
-        SELECT DISTINCT s.* FROM chat_sessions s
-        LEFT JOIN chat_messages m ON s.id = m.sessionId
-        WHERE s.title LIKE '%' || :query || '%' 
-           OR m.text LIKE '%' || :query || '%'
-        ORDER BY s.updatedAt DESC
-    """)
-    fun searchSessions(query: String): Flow<List<ChatSession>>
+    @Query("SELECT * FROM voice_profiles WHERE isActiveSystemVoice = 1 LIMIT 1")
+    suspend fun getActiveVoice(): VoiceProfile?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertSession(session: ChatSession): Long
+    suspend fun insert(profile: VoiceProfile): Long
 
-    @Query("UPDATE chat_sessions SET title = :title, updatedAt = :timestamp WHERE id = :sessionId")
-    suspend fun updateSessionTitleAndTime(sessionId: Long, title: String, timestamp: Long = System.currentTimeMillis())
-
-    @Query("UPDATE chat_sessions SET updatedAt = :timestamp WHERE id = :sessionId")
-    suspend fun touchSession(sessionId: Long, timestamp: Long = System.currentTimeMillis())
+    @Update
+    suspend fun update(profile: VoiceProfile)
 
     @Delete
-    suspend fun deleteSession(session: ChatSession)
+    suspend fun delete(profile: VoiceProfile)
 
-    // caps active thread view to 100 messages for low-RAM efficiency
-    @Query("""
-        SELECT * FROM (
-            SELECT * FROM chat_messages 
-            WHERE sessionId = :sessionId 
-            ORDER BY id DESC LIMIT 100
-        ) ORDER BY id ASC
-    """)
-    fun getMessagesForSession(sessionId: Long): Flow<List<ChatMessage>>
+    @Query("UPDATE voice_profiles SET isActiveSystemVoice = 0")
+    suspend fun clearActiveVoices()
 
-    @Insert
-    suspend fun insertMessage(message: ChatMessage)
+    @Query("UPDATE voice_profiles SET isActiveSystemVoice = 1 WHERE id = :profileId")
+    suspend fun setActiveVoice(profileId: Long)
+
+    @Transaction
+    suspend fun setActiveVoiceTransaction(profileId: Long) {
+        clearActiveVoices()
+        setActiveVoice(profileId)
+    }
 }
