@@ -1,0 +1,6 @@
+{
+  "name": "Aura Voice",
+  "description": "Pure on-device Voice Cloning Studio powered by F5-TTS flow matching and Piper ONNX fine-tuning.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
