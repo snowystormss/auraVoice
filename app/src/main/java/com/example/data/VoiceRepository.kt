@@ -1,26 +1,47 @@
 package com.example.data
 
-import com.example.data.api.Content
-import com.example.data.api.GeminiApiService
-import com.example.data.api.GenerateContentRequest
-import com.example.data.api.Part
-import com.example.data.api.UsageMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
-data class GeminiResult(
-    val text: String,
-    val usageMetadata: UsageMetadata? = null
-)
-
 class VoiceRepository(
     private val voiceDao: VoiceProfileDao,
-    private val chatDao: ChatMessageDao,
-    private val apiService: GeminiApiService
+    private val chatDao: ChatMessageDao
 ) {
     val allProfiles: Flow<List<VoiceProfile>> = voiceDao.getAllProfiles()
-    val allMessages: Flow<List<ChatMessage>> = chatDao.getRecentMessages()
+
+    fun getSessions(searchQuery: String): Flow<List<ChatSession>> {
+        return if (searchQuery.isBlank()) {
+            chatDao.getAllSessions()
+        } else {
+            chatDao.searchSessions(searchQuery.trim())
+        }
+    }
+
+    fun getMessagesForSession(sessionId: Long): Flow<List<ChatMessage>> {
+        return chatDao.getMessagesForSession(sessionId)
+    }
+
+    suspend fun createSession(title: String = "new chat"): Long = withContext(Dispatchers.IO) {
+        chatDao.insertSession(ChatSession(title = title))
+    }
+
+    suspend fun updateSessionTitle(sessionId: Long, title: String) = withContext(Dispatchers.IO) {
+        chatDao.updateSessionTitleAndTime(sessionId, title)
+    }
+
+    suspend fun touchSession(sessionId: Long) = withContext(Dispatchers.IO) {
+        chatDao.touchSession(sessionId)
+    }
+
+    suspend fun deleteSession(session: ChatSession) = withContext(Dispatchers.IO) {
+        chatDao.deleteSession(session)
+    }
+
+    suspend fun insertMessage(message: ChatMessage) = withContext(Dispatchers.IO) {
+        chatDao.insertMessage(message)
+        chatDao.touchSession(message.sessionId)
+    }
 
     suspend fun insertProfile(profile: VoiceProfile): Long = withContext(Dispatchers.IO) {
         voiceDao.insert(profile)
@@ -36,60 +57,5 @@ class VoiceRepository(
 
     suspend fun setActiveVoice(profileId: Long) = withContext(Dispatchers.IO) {
         voiceDao.setActiveVoiceTransaction(profileId)
-    }
-
-    suspend fun insertMessage(message: ChatMessage) = withContext(Dispatchers.IO) {
-        chatDao.insert(message)
-    }
-
-    suspend fun clearChatHistory() = withContext(Dispatchers.IO) {
-        chatDao.clearAll()
-    }
-
-    suspend fun getGeminiResponse(
-        model: String,
-        prompt: String,
-        systemInstruction: String,
-        history: List<ChatMessage>,
-        apiKey: String
-    ): GeminiResult = withContext(Dispatchers.IO) {
-        val chatTurns = history.takeLast(6)
-        val contextContents = ArrayList<Content>(chatTurns.size + 1)
-
-        for (msg in chatTurns) {
-            contextContents.add(
-                Content(
-                    role = if (msg.role == "user") "user" else "model",
-                    parts = listOf(Part(text = msg.text))
-                )
-            )
-        }
-
-        contextContents.add(
-            Content(
-                role = "user",
-                parts = listOf(Part(text = prompt))
-            )
-        )
-
-        val sysInstructionRequest = if (systemInstruction.isNotBlank()) {
-            Content(parts = listOf(Part(text = systemInstruction)))
-        } else {
-            null
-        }
-
-        val request = GenerateContentRequest(
-            contents = contextContents,
-            systemInstruction = sysInstructionRequest
-        )
-
-        try {
-            val response = apiService.generateContent(model, apiKey, request)
-            val text = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
-                ?: "i could not generate a response right now."
-            GeminiResult(text, response.usageMetadata)
-        } catch (e: Exception) {
-            GeminiResult("network error: ${e.message ?: "unknown api issue"}", null)
-        }
     }
 }
