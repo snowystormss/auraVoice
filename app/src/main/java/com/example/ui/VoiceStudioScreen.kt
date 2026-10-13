@@ -1,8 +1,7 @@
 package com.example.ui
 
-import androidx.compose.animation.AnimatedContent
+import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -16,15 +15,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -36,15 +30,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -52,9 +46,7 @@ import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -62,8 +54,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
@@ -77,7 +67,6 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,12 +76,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.data.api.LlmProvider
 import com.example.data.api.LlmSettings
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -104,12 +93,14 @@ fun VoiceStudioScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-    var showSettingsSheet by rememberSaveable { mutableStateOf(false) }
+    var showVoicesSheet by rememberSaveable { mutableStateOf(false) }
+    var showApiSheet by rememberSaveable { mutableStateOf(false) }
+
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val haptics = LocalHapticFeedback.current
+    val context = LocalContext.current
 
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { msg ->
@@ -123,61 +114,50 @@ fun VoiceStudioScreen(
         drawerContent = {
             ModalDrawerSheet(
                 drawerContainerColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.width(310.dp)
+                modifier = Modifier.width(300.dp)
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .padding(16.dp)
+                        .padding(horizontal = 14.dp, vertical = 16.dp)
                 ) {
+                    // Search & New Chat Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "conversations",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                        OutlinedTextField(
+                            value = uiState.searchQuery,
+                            onValueChange = viewModel::updateSearchQuery,
+                            placeholder = { Text("search chats") },
+                            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            trailingIcon = {
+                                if (uiState.searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { viewModel.updateSearchQuery("") }) {
+                                        Icon(Icons.Rounded.Close, contentDescription = "clear", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(24.dp),
+                            modifier = Modifier.weight(1f)
                         )
-                        FilledTonalButton(
+
+                        FilledTonalIconButton(
                             onClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 viewModel.startNewChat()
-                                selectedTab = 0
                                 scope.launch { drawerState.close() }
-                            },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            }
                         ) {
-                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("new chat")
+                            Icon(Icons.Rounded.Add, contentDescription = "new chat")
                         }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    OutlinedTextField(
-                        value = uiState.searchQuery,
-                        onValueChange = viewModel::updateSearchQuery,
-                        placeholder = { Text("search chats & messages...") },
-                        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
-                        trailingIcon = {
-                            if (uiState.searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                                    Icon(Icons.Rounded.Close, contentDescription = "clear search")
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    Spacer(modifier = Modifier.height(8.dp))
-
+                    // Chat Threads List
                     LazyColumn(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -185,9 +165,9 @@ fun VoiceStudioScreen(
                         items(
                             items = uiState.sessions,
                             key = { it.id },
-                            contentType = { "chat_session_item" }
+                            contentType = { "session" }
                         ) { session ->
-                            val isSelected = session.id == uiState.currentSessionId
+                            val selected = session.id == uiState.currentSessionId
                             NavigationDrawerItem(
                                 icon = {
                                     Icon(
@@ -206,20 +186,19 @@ fun VoiceStudioScreen(
                                 badge = {
                                     IconButton(
                                         onClick = { viewModel.deleteSession(session) },
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier.size(26.dp)
                                     ) {
                                         Icon(
                                             Icons.Rounded.DeleteOutline,
-                                            contentDescription = "delete chat",
+                                            contentDescription = "delete",
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
                                 },
-                                selected = isSelected,
+                                selected = selected,
                                 onClick = {
                                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     viewModel.selectSession(session.id)
-                                    selectedTab = 0
                                     scope.launch { drawerState.close() }
                                 },
                                 colors = NavigationDrawerItemDefaults.colors(
@@ -230,6 +209,67 @@ fun VoiceStudioScreen(
                             )
                         }
                     }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+
+                    // Hamburger Menu Footer: Custom Voices, API Setup, and Theme
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
+                        label = {
+                            Column {
+                                Text("custom voices & system tts", fontWeight = FontWeight.Medium)
+                                Text(
+                                    text = uiState.activeProfile?.name ?: "no .onnx model active",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showVoicesSheet = true
+                        }
+                    )
+
+                    NavigationDrawerItem(
+                        icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
+                        label = {
+                            Column {
+                                Text("api & model setup", fontWeight = FontWeight.Medium)
+                                Text(
+                                    text = uiState.llmSettings.modelName.ifBlank { "local tts mode" },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            showApiSheet = true
+                        }
+                    )
+
+                    NavigationDrawerItem(
+                        icon = {
+                            Icon(
+                                if (uiState.isDarkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                                contentDescription = null
+                            )
+                        },
+                        label = {
+                            Text(if (uiState.isDarkTheme) "switch to cream light" else "switch to espresso dark")
+                        },
+                        selected = false,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.toggleTheme()
+                        }
+                    )
                 }
             }
         }
@@ -241,8 +281,8 @@ fun VoiceStudioScreen(
             topBar = {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground
                     ),
                     navigationIcon = {
                         IconButton(
@@ -251,7 +291,7 @@ fun VoiceStudioScreen(
                                 scope.launch { drawerState.open() }
                             }
                         ) {
-                            Icon(Icons.Rounded.Menu, contentDescription = "open chat drawer")
+                            Icon(Icons.Rounded.Menu, contentDescription = "menu")
                         }
                     },
                     title = {
@@ -263,15 +303,18 @@ fun VoiceStudioScreen(
                             Spacer(modifier = Modifier.width(10.dp))
                             Column {
                                 Text(
-                                    text = "auravoice",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
+                                    text = uiState.llmSettings.modelName.ifBlank { "auravoice" },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${uiState.llmSettings.modelName.ifBlank { "local tts" }} • ${uiState.activeProfile?.name ?: "no voice"}",
+                                    text = uiState.activeProfile?.name ?: "tap menu to load .onnx voice",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -288,91 +331,59 @@ fun VoiceStudioScreen(
                                     viewModel.stopSpeaking()
                                 }
                             ) {
-                                Icon(Icons.Rounded.Stop, contentDescription = "stop voice playback")
+                                Icon(Icons.Rounded.Stop, contentDescription = "stop speaking")
                             }
                         }
-                        IconButton(onClick = { showSettingsSheet = true }) {
-                            Icon(Icons.Rounded.Settings, contentDescription = "server & model settings")
+                        IconButton(onClick = viewModel::startNewChat) {
+                            Icon(Icons.Rounded.Add, contentDescription = "new chat")
                         }
                     }
                 )
-            },
-            bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    NavigationBarItem(
-                        selected = selectedTab == 0,
-                        onClick = {
-                            if (selectedTab != 0) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                selectedTab = 0
-                            }
-                        },
-                        icon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
-                        label = { Text("chat") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 1,
-                        onClick = {
-                            if (selectedTab != 1) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                selectedTab = 1
-                            }
-                        },
-                        icon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
-                        label = { Text("onnx voices") }
-                    )
-                }
             }
         ) { innerPadding ->
-            AnimatedContent(
-                targetState = selectedTab,
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
-                transitionSpec = {
-                    val direction = if (targetState > initialState) 1 else -1
-                    (slideInHorizontally(
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        )
-                    ) { fullWidth -> direction * (fullWidth / 5) } + fadeIn())
-                        .togetherWith(
-                            slideOutHorizontally(
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioNoBouncy,
-                                    stiffness = Spring.StiffnessMediumLow
-                                )
-                            ) { fullWidth -> -direction * (fullWidth / 5) } + fadeOut()
-                        ).using(SizeTransform(clip = false))
-                },
-                label = "pane_transition"
-            ) { tabIndex ->
-                when (tabIndex) {
-                    0 -> TextVoiceStudioPane(
-                        uiState = uiState,
-                        onSendPrompt = viewModel::sendPrompt,
-                        onSpeakMessage = viewModel::speakTextDirect
-                    )
-                    1 -> VoicesLibraryPane(
-                        profiles = uiState.profiles,
-                        onImportVoice = viewModel::importOnnxVoice,
-                        onSelectVoice = viewModel::selectActiveVoice,
-                        onUpdateParameters = viewModel::updateVoiceParameters,
-                        onDeleteVoice = viewModel::deleteVoice
-                    )
-                }
+                    .padding(innerPadding)
+            ) {
+                TextVoiceStudioPane(
+                    uiState = uiState,
+                    onSendPrompt = viewModel::sendPrompt,
+                    onSpeakMessage = viewModel::speakTextDirect
+                )
             }
         }
     }
 
-    if (showSettingsSheet) {
+    // Custom Voices & System TTS Sheet (opened from Hamburger Menu)
+    if (showVoicesSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showVoicesSheet = false },
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            VoicesLibraryPane(
+                profiles = uiState.profiles,
+                onImportVoice = viewModel::importOnnxVoice,
+                onSelectVoice = viewModel::selectActiveVoice,
+                onUpdateParameters = viewModel::updateVoiceParameters,
+                onDeleteVoice = viewModel::deleteVoice,
+                onOpenSystemTtsSettings = {
+                    runCatching {
+                        context.startActivity(Intent("com.android.settings.TTS_SETTINGS"))
+                    }
+                }
+            )
+        }
+    }
+
+    // Minimal 3-Box API & Model Sheet
+    if (showApiSheet) {
         LlmSettingsBottomSheet(
             currentSettings = uiState.llmSettings,
-            onDismiss = { showSettingsSheet = false },
+            onDismiss = { showApiSheet = false },
             onSave = { updated ->
                 viewModel.updateSettings(updated)
-                showSettingsSheet = false
+                showApiSheet = false
             }
         )
     }
@@ -401,7 +412,7 @@ fun LlmSettingsBottomSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "api & model setup",
+                text = "api & model",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -410,34 +421,38 @@ fun LlmSettingsBottomSheet(
                 value = apiUrl,
                 onValueChange = { apiUrl = it },
                 label = { Text("api link") },
-                placeholder = { Text("e.g. http://192.168.1.50:8080/v1 or https://openrouter.ai/api/v1") },
+                placeholder = { Text("http://192.168.1.50:8080 or https://openrouter.ai/api/v1") },
                 singleLine = true,
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             )
 
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { apiKey = it },
-                label = { Text("api key (optional for local servers)") },
-                placeholder = { Text("paste key or leave blank") },
+                label = { Text("api key (optional)") },
+                placeholder = { Text("leave blank for local llama.cpp") },
                 singleLine = true,
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             )
 
             OutlinedTextField(
                 value = modelName,
                 onValueChange = { modelName = it },
-                label = { Text("exact model name") },
-                placeholder = { Text("e.g. gemini-2.5-flash, gpt-4o-mini, or local-model") },
+                label = { Text("model name") },
+                placeholder = { Text("gemini-2.5-flash, gpt-4o-mini, local-model") },
                 singleLine = true,
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             )
 
             OutlinedTextField(
                 value = systemPrompt,
                 onValueChange = { systemPrompt = it },
-                label = { Text("system prompt (optional)") },
+                label = { Text("system prompt") },
                 maxLines = 3,
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -452,9 +467,10 @@ fun LlmSettingsBottomSheet(
                         )
                     )
                 },
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 24.dp)
+                    .padding(top = 4.dp, bottom = 24.dp)
             ) {
                 Text("save")
             }
@@ -463,9 +479,10 @@ fun LlmSettingsBottomSheet(
 }
 
 @Composable
-private fun ReactiveVoiceOrb(
+fun ReactiveVoiceOrb(
     audioEnergyFlow: StateFlow<Float>,
-    isSpeaking: Boolean
+    isSpeaking: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val rawEnergy by audioEnergyFlow.collectAsStateWithLifecycle()
 
@@ -480,10 +497,10 @@ private fun ReactiveVoiceOrb(
 
     val infiniteTransition = rememberInfiniteTransition(label = "idle_breath")
     val idlePulse by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.06f,
+        initialValue = 0.90f,
+        targetValue = 1.05f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
+            animation = tween(2400, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "idle_scale"
@@ -493,7 +510,7 @@ private fun ReactiveVoiceOrb(
     val tertiaryColor = MaterialTheme.colorScheme.tertiary
 
     Box(
-        modifier = Modifier.size(36.dp),
+        modifier = modifier.size(32.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(
@@ -503,16 +520,16 @@ private fun ReactiveVoiceOrb(
                     val activeScale = if (isSpeaking) 1f + (smoothedEnergy * 0.55f) else idlePulse
                     scaleX = activeScale
                     scaleY = activeScale
-                    alpha = if (isSpeaking) 0.95f else 0.45f
+                    alpha = if (isSpeaking) 0.95f else 0.5f
                 }
         ) {
             val baseRadius = size.minDimension / 2f
-            drawCircle(color = tertiaryColor.copy(alpha = 0.28f), radius = baseRadius)
+            drawCircle(color = tertiaryColor.copy(alpha = 0.25f), radius = baseRadius)
             drawCircle(
                 color = primaryColor.copy(alpha = 0.55f),
-                radius = baseRadius * (0.68f + smoothedEnergy * 0.15f)
+                radius = baseRadius * (0.66f + smoothedEnergy * 0.16f)
             )
-            drawCircle(color = primaryColor, radius = baseRadius * 0.42f)
+            drawCircle(color = primaryColor, radius = baseRadius * 0.40f)
         }
     }
 }

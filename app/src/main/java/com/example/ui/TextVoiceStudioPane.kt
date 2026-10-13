@@ -5,14 +5,15 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,12 +25,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.VolumeUp
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,8 +43,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.ChatMessage
 
@@ -73,96 +76,105 @@ fun TextVoiceStudioPane(
             .fillMaxSize()
             .imePadding()
     ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            items(
-                items = uiState.messages,
-                key = { it.id },
-                contentType = { if (it.isUser) "user_msg" else "bot_msg" }
-            ) { msg ->
-                ChatBubble(
-                    message = msg,
-                    onReplayAudio = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        onSpeakMessage(msg.text)
-                    },
-                    modifier = Modifier.animateItem(
-                        fadeInSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        placementSpec = spring(
-                            dampingRatio = Spring.DampingRatioLowBouncy,
-                            stiffness = Spring.StiffnessMediumLow
+        if (uiState.messages.isEmpty() && uiState.streamingReply == null) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "what's on your mind?",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = uiState.activeProfile?.let { "speaking with ${it.name}" }
+                            ?: "open menu to load a custom .onnx voice",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(
+                    items = uiState.messages,
+                    key = { it.id },
+                    contentType = { if (it.isUser) "user" else "bot" }
+                ) { msg ->
+                    ChatBubble(
+                        message = msg,
+                        onReplayAudio = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onSpeakMessage(msg.text)
+                        },
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            placementSpec = spring(
+                                dampingRatio = Spring.DampingRatioLowBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            )
                         )
                     )
-                )
-            }
+                }
 
-            val liveText = uiState.streamingReply
-            if (liveText != null && liveText.isNotEmpty()) {
-                item(key = "streaming_live_bubble", contentType = "streaming_msg") {
-                    ChatBubble(
-                        message = ChatMessage(
-                            id = -1L,
-                            text = liveText,
-                            isUser = false
-                        ),
-                        onReplayAudio = {},
-                        isStreaming = true
-                    )
+                val liveText = uiState.streamingReply
+                if (!liveText.isNullOrEmpty()) {
+                    item(key = "streaming_bubble", contentType = "stream") {
+                        ChatBubble(
+                            message = ChatMessage(
+                                id = -1,
+                                sessionId = uiState.currentSessionId ?: 0L,
+                                role = "model",
+                                text = liveText
+                            ),
+                            onReplayAudio = {},
+                            isStreaming = true
+                        )
+                    }
                 }
             }
         }
 
-        AnimatedVisibility(
-            visible = uiState.isGenerating,
-            enter = slideInVertically { it / 2 } + fadeIn(),
-            exit = fadeOut()
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "synthesizing stream...",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
-
+        // Minimalist Floating Pill Input Bar
         Surface(
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp,
-            modifier = Modifier.fillMaxWidth()
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(28.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    placeholder = { Text("message or paste text to synthesize...") },
+                    placeholder = { Text("message...") },
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(24.dp),
-                    maxLines = 4
+                    maxLines = 4,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent
+                    )
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 FilledIconButton(
                     onClick = {
                         val prompt = inputText.trim()
@@ -172,11 +184,13 @@ fun TextVoiceStudioPane(
                             inputText = ""
                         }
                     },
-                    enabled = inputText.isNotBlank() && !uiState.isGenerating
+                    enabled = inputText.isNotBlank() && !uiState.isGenerating,
+                    modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.Send,
-                        contentDescription = "send prompt"
+                        contentDescription = "send",
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -213,10 +227,10 @@ private fun ChatBubble(
                 bottomStart = if (isUser) 20.dp else 6.dp,
                 bottomEnd = if (isUser) 6.dp else 20.dp
             ),
-            modifier = Modifier.fillMaxWidth(0.86f)
+            modifier = Modifier.fillMaxWidth(0.85f)
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
@@ -224,16 +238,16 @@ private fun ChatBubble(
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.weight(1f)
                 )
-                if (!isStreaming) {
+                AnimatedVisibility(visible = !isStreaming, enter = fadeIn(), exit = fadeOut()) {
                     IconButton(
                         onClick = onReplayAudio,
-                        modifier = Modifier.size(30.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.VolumeUp,
-                            contentDescription = "speak with active onnx model",
+                            contentDescription = "speak",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(17.dp)
                         )
                     }
                 }

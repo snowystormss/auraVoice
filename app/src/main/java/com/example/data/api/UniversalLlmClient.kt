@@ -2,10 +2,8 @@ package com.example.data.api
 
 import androidx.compose.runtime.Immutable
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.ProducerScope
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
@@ -13,10 +11,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
-import okhttp3.sse.EventSource
-import okhttp3.sse.EventSourceListener
-import okhttp3.sse.EventSources
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -26,7 +20,7 @@ data class LlmSettings(
     val apiUrl: String = "https://generativelanguage.googleapis.com",
     val apiKey: String = "",
     val modelName: String = "gemini-2.5-flash",
-    val systemPrompt: String = "you are a helpful assistant. keep answers concise and conversational for voice synthesis."
+    val systemPrompt: String = "keep answers concise, natural, and conversational."
 )
 
 class UniversalLlmClient {
@@ -44,33 +38,64 @@ class UniversalLlmClient {
         .writeTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    private val sseFactory = EventSources.createFactory(client)
-
     fun streamChat(
         settings: LlmSettings,
         history: List<Pair<String, String>>,
         prompt: String
-    ): Flow<String> = callbackFlow {
+    ): Flow<String> = flow {
         val cleanUrl = settings.apiUrl.trim().trimEnd('/')
-        val isGeminiNative = cleanUrl.contains("generativelanguage.googleapis.com") &&
-            !cleanUrl.contains("/openai") ||
+        val isGeminiNative = (cleanUrl.contains("generativelanguage.googleapis.com") &&
+            !cleanUrl.contains("/openai")) ||
             (cleanUrl.isEmpty() && settings.apiKey.startsWith("AIza"))
 
-        if (isGeminiNative) {
-            streamGemini(cleanUrl, settings, history, prompt, this)
+        val request = if (isGeminiNative) {
+            buildGeminiRequest(cleanUrl, settings, history, prompt)
         } else {
-            streamOpenAiCompatible(cleanUrl, settings, history, prompt, this)
+            buildOpenAiRequest(cleanUrl, settings, history, prompt)
         }
-        awaitClose {}
+
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                error("http ${response.code}: ${response.message}")
+            }
+            val source = response.body?.source() ?: return@use
+
+            while (!source.exhausted()) {
+                val line = source.readUtf8Line() ?: break
+                if (!line.startsWith("data:")) continue
+                val data = line.removePrefix("data:").trim()
+                if (data.isEmpty() || data == "[DONE]") continue
+
+                val token = runCatching {
+                    val json = JSONObject(data)
+                    if (isGeminiNative) {
+                        json.optJSONArray("candidates")
+                            ?.optJSONObject(0)
+                            ?.optJSONObject("content")
+                            ?.optJSONArray("parts")
+                            ?.optJSONObject(0)
+                            ?.optString("text")
+                    } else {
+                        json.optJSONArray("choices")
+                            ?.optJSONObject(0)
+                            ?.optJSONObject("delta")
+                            ?.optString("content")
+                    }
+                }.getOrNull()
+
+                if (!token.isNullOrEmpty()) {
+                    emit(token)
+                }
+            }
+        }
     }.flowOn(Dispatchers.IO)
 
-    private fun streamGemini(
+    private fun buildGeminiRequest(
         cleanUrl: String,
         settings: LlmSettings,
         history: List<Pair<String, String>>,
-        prompt: String,
-        scope: ProducerScope<String>
-    ) {
+        prompt: String
+    ): Request {
         val base = cleanUrl.ifEmpty { "https://generativelanguage.googleapis.com" }
         val model = settings.modelName.ifBlank { "gemini-2.5-flash" }.removePrefix("models/")
         val url = "$base/v1beta/models/$model:streamGenerateContent?alt=sse&key=${settings.apiKey}"
@@ -97,45 +122,18 @@ class UniversalLlmClient {
             )
         }
 
-        val request = Request.Builder()
+        return Request.Builder()
             .url(url)
             .post(root.toString().toRequestBody("application/json".toMediaType()))
             .build()
-
-        sseFactory.newEventSource(request, object : EventSourceListener() {
-            override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
-                runCatching {
-                    val chunk = JSONObject(data)
-                        .optJSONArray("candidates")
-                        ?.optJSONObject(0)
-                        ?.optJSONObject("content")
-                        ?.optJSONArray("parts")
-                        ?.optJSONObject(0)
-                        ?.optString("text")
-                    if (!chunk.isNullOrEmpty()) {
-                        scope.trySend(chunk)
-                    }
-                }
-            }
-
-            override fun onClosed(eventSource: EventSource) {
-                scope.close()
-            }
-
-            override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                scope.close(t ?: Exception("gemini error: http ${response?.code ?: "connection failed"}"))
-            }
-        })
     }
 
-    private fun streamOpenAiCompatible(
+    private fun buildOpenAiRequest(
         cleanUrl: String,
         settings: LlmSettings,
         history: List<Pair<String, String>>,
-        prompt: String,
-        scope: ProducerScope<String>
-    ) {
-        // automatically normalize urls for openrouter, openai, and llama.cpp
+        prompt: String
+    ): Request {
         val endpointUrl = when {
             cleanUrl.endsWith("/chat/completions") -> cleanUrl
             cleanUrl.endsWith("/v1") -> "$cleanUrl/chat/completions"
@@ -164,39 +162,13 @@ class UniversalLlmClient {
             .put("messages", messagesArray)
             .put("stream", true)
 
-        val requestBuilder = Request.Builder()
+        val builder = Request.Builder()
             .url(endpointUrl)
             .post(root.toString().toRequestBody("application/json".toMediaType()))
 
         if (settings.apiKey.isNotBlank()) {
-            requestBuilder.addHeader("Authorization", "Bearer ${settings.apiKey}")
+            builder.addHeader("Authorization", "Bearer ${settings.apiKey}")
         }
-
-        sseFactory.newEventSource(requestBuilder.build(), object : EventSourceListener() {
-            override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
-                if (data.trim() == "[DONE]") {
-                    scope.close()
-                    return
-                }
-                runCatching {
-                    val delta = JSONObject(data)
-                        .optJSONArray("choices")
-                        ?.optJSONObject(0)
-                        ?.optJSONObject("delta")
-                        ?.optString("content")
-                    if (!delta.isNullOrEmpty()) {
-                        scope.trySend(delta)
-                    }
-                }
-            }
-
-            override fun onClosed(eventSource: EventSource) {
-                scope.close()
-            }
-
-            override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                scope.close(t ?: Exception("api error: http ${response?.code ?: "connection failed"}"))
-            }
-        })
+        return builder.build()
     }
 }

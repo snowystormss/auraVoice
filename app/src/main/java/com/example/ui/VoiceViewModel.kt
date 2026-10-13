@@ -11,7 +11,6 @@ import com.example.data.ChatMessage
 import com.example.data.ChatSession
 import com.example.data.VoiceProfile
 import com.example.data.VoiceRepository
-import com.example.data.api.LlmProvider
 import com.example.data.api.LlmSettings
 import com.example.data.api.UniversalLlmClient
 import com.example.engine.PiperOnnxEngine
@@ -42,6 +41,7 @@ data class StudioUiState(
     val streamingReply: String? = null,
     val isGenerating: Boolean = false,
     val isSpeaking: Boolean = false,
+    val isDarkTheme: Boolean = true,
     val llmSettings: LlmSettings = LlmSettings(),
     val errorMessage: String? = null
 )
@@ -64,11 +64,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val _streamingReply = MutableStateFlow<String?>(null)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _llmSettings = MutableStateFlow(loadSettings())
+    private val _isDarkTheme = MutableStateFlow(prefs.getBoolean("dark_theme", true))
 
     val audioEnergy: StateFlow<Float> = onnxEngine.audioEnergy
 
     private val filteredSessionsFlow = _searchQuery
-        .debounce(120L)
+        .debounce(100L)
         .flatMapLatest { query -> repository.getSessions(query) }
 
     private val currentMessagesFlow = _currentSessionId
@@ -81,8 +82,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         filteredSessionsFlow,
         currentMessagesFlow,
         combine(_currentSessionId, _searchQuery, _streamingReply) { id, q, stream -> Triple(id, q, stream) },
-        combine(_isGenerating, onnxEngine.isSpeaking, _llmSettings, _errorMessage) { gen, speak, llm, err ->
-             arrayOf(gen, speak, llm, err)
+        combine(_isGenerating, onnxEngine.isSpeaking, _llmSettings, _isDarkTheme, _errorMessage) { gen, speak, llm, dark, err ->
+            arrayOf(gen, speak, llm, dark, err)
         }
     ) { profiles, sessions, messages, sessionTriple, statusArray ->
         val active = profiles.firstOrNull { it.isActiveSystemVoice } ?: profiles.firstOrNull()
@@ -102,13 +103,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             isGenerating = statusArray[0] as Boolean,
             isSpeaking = statusArray[1] as Boolean,
             llmSettings = statusArray[2] as LlmSettings,
-            errorMessage = statusArray[3] as String?
+            isDarkTheme = statusArray[3] as Boolean,
+            errorMessage = statusArray[4] as String?
         )
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = StudioUiState()
     )
+
+    fun toggleTheme() {
+        val next = !_isDarkTheme.value
+        _isDarkTheme.value = next
+        prefs.edit().putBoolean("dark_theme", next).apply()
+    }
 
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
@@ -117,7 +125,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     fun startNewChat() {
         viewModelScope.launch {
             onnxEngine.stopPlayback()
-            val newId = repository.createSession("new conversation")
+            val newId = repository.createSession("new chat")
             _currentSessionId.value = newId
         }
     }
@@ -146,42 +154,41 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             _errorMessage.value = null
             _streamingReply.value = ""
 
-            // Ensure a session exists, or create one automatically
             var sessionId = _currentSessionId.value
-            val isFirstMessageInSession = sessionId == null || uiState.value.messages.isEmpty()
+            val isFirstMessage = sessionId == null || uiState.value.messages.isEmpty()
             if (sessionId == null) {
-                sessionId = repository.createSession(promptText.take(36))
+                sessionId = repository.createSession(promptText.take(34))
                 _currentSessionId.value = sessionId
-            } else if (isFirstMessageInSession) {
-                repository.updateSessionTitle(sessionId, promptText.take(36))
+            } else if (isFirstMessage) {
+                repository.updateSessionTitle(sessionId, promptText.take(34))
             }
 
-            val userMsg = ChatMessage(
-                sessionId = sessionId,
-                role = "user",
-                text = promptText,
-                voiceId = activeVoice?.id?.toInt(),
-                voiceName = activeVoice?.name
+            repository.insertMessage(
+                ChatMessage(
+                    sessionId = sessionId,
+                    role = "user",
+                    text = promptText,
+                    voiceId = activeVoice?.id?.toInt(),
+                    voiceName = activeVoice?.name
+                )
             )
-            repository.insertMessage(userMsg)
 
-            // If API key is required for the chosen cloud provider and missing, fall back to direct TTS
-            val isCloudUrl = currentSettings.apiUrl.contains("googleapis.com") ||
+            val isCloudEndpoint = currentSettings.apiUrl.contains("googleapis.com") ||
                 currentSettings.apiUrl.contains("openai.com") ||
                 currentSettings.apiUrl.contains("openrouter.ai")
 
-            if (currentSettings.apiUrl.isBlank() || (isCloudUrl && currentSettings.apiKey.isBlank())) {
+            if (currentSettings.apiUrl.isBlank() || (isCloudEndpoint && currentSettings.apiKey.isBlank())) {
                 _streamingReply.value = null
                 if (activeVoice != null) {
                     onnxEngine.enqueueSpeech(promptText, activeVoice)
                 } else {
-                    _errorMessage.value = "set your api link / key in settings or load an .onnx voice"
+                    _errorMessage.value = "add an api key in menu -> api setup, or load a custom voice"
                 }
                 _isGenerating.value = false
                 return@launch
             }
 
-            val history = uiState.value.messages.takeLast(8).map { it.role to it.text }
+            val history = uiState.value.messages.takeLast(6).map { it.role to it.text }
             val sentenceBuffer = StringBuilder()
             val fullResponse = StringBuilder()
 
@@ -219,7 +226,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.onFailure { e ->
                 _streamingReply.value = null
-                _errorMessage.value = "server error: ${e.localizedMessage ?: "check url / api key"}"
+                _errorMessage.value = "connection error: ${e.localizedMessage ?: "check api link"}"
             }
 
             _isGenerating.value = false
@@ -231,10 +238,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             apiUrl = prefs.getString("api_url", "https://generativelanguage.googleapis.com") ?: "",
             apiKey = prefs.getString("api_key", "") ?: "",
             modelName = prefs.getString("model_name", "gemini-2.5-flash") ?: "",
-            systemPrompt = prefs.getString(
-                "system_prompt",
-                "you are a helpful assistant. keep answers concise and conversational."
-            ) ?: ""
+            systemPrompt = prefs.getString("system_prompt", "keep answers concise, natural, and conversational.") ?: ""
         )
     }
 
@@ -262,7 +266,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
                 context.contentResolver.openInputStream(jsonUri)?.use { input ->
                     jsonDest.outputStream().buffered(16 * 1024).use { output -> input.copyTo(output, bufferSize = 16 * 1024) }
-                } ?: error("cannot read .json config")
+                } ?: error("cannot read .json file")
 
                 var detectedSampleRate = 22050
                 var detectedLengthScale = 1.0f
