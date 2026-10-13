@@ -1,194 +1,167 @@
 package com.example.engine
 
-import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import android.util.Log
-import kotlinx.coroutines.*
+import com.example.data.VoiceProfile
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
-import kotlin.math.PI
-import kotlin.math.sin
-import kotlin.random.Random
+import kotlin.math.sqrt
 
-/**
- * Ultra-low latency, low-memory Piper ONNX Speech Synthesis Engine.
- *
- * Runs lightweight VITS transformer inference locally on Android with <25MB RAM,
- * sub-30ms time-to-first-audio, and streaming AudioTrack playback.
- */
-class PiperOnnxEngine(private val context: Context) {
-
-    companion object {
-        const val SAMPLE_RATE = 22050
-        const val CHANNEL_CONFIG = AudioFormat.CHANNEL_OUT_MONO
-        const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-    }
+class PiperOnnxEngine(
+    private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
+) {
+    private val engineMutex = Mutex()
+    private var loadedProfileId: Long? = null
+    private var audioTrack: AudioTrack? = null
+    private var currentSampleRate: Int = 22050
 
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
-    private var currentAudioTrack: AudioTrack? = null
-    private var playbackJob: Job? = null
+    // Normalized 0f..1f energy level used for draw-phase UI waveform animations
+    private val _audioEnergy = MutableStateFlow(0f)
+    val audioEnergy: StateFlow<Float> = _audioEnergy.asStateFlow()
 
-    /**
-     * Synthesizes text using the fine-tuned Piper voice model and streams
-     * directly into the low-latency Android AudioTrack.
-     */
-    fun speak(
-        text: String,
-        modelFile: File?,
-        pitch: Float = 1.0f,
-        speechRate: Float = 1.0f,
-        languageCode: String = "en-US",
-        onDone: (() -> Unit)? = null
-    ) {
-        stop()
+    private val synthesisChannel = Channel<SynthesisRequest>(Channel.BUFFERED)
+    private var workerJob: Job? = null
 
-        if (text.isBlank()) {
-            onDone?.invoke()
-            return
-        }
+    data class SynthesisRequest(
+        val text: String,
+        val profile: VoiceProfile
+    )
 
-        playbackJob = CoroutineScope(Dispatchers.Default).launch {
-            _isSpeaking.value = true
-            try {
-                val pcmSamples = synthesizePcm(text, modelFile, pitch, speechRate, languageCode)
-                playPcmStream(pcmSamples)
-            } catch (e: Exception) {
-                Log.e("PiperOnnxEngine", "Piper synthesis error: ${e.message}")
-            } finally {
-                _isSpeaking.value = false
-                onDone?.invoke()
+    init {
+        startSynthesisQueue()
+    }
+
+    private fun startSynthesisQueue() {
+        workerJob = scope.launch {
+            for (request in synthesisChannel) {
+                synthesizeAndPlayInternal(request.text, request.profile)
             }
         }
     }
 
-    fun stop() {
-        playbackJob?.cancel()
-        playbackJob = null
-        try {
-            currentAudioTrack?.apply {
-                if (playState == AudioTrack.PLAYSTATE_PLAYING) {
-                    pause()
-                    flush()
-                    stop()
+    fun enqueueSpeech(text: String, profile: VoiceProfile) {
+        if (text.isBlank()) return
+        synthesisChannel.trySend(SynthesisRequest(text.trim(), profile))
+    }
+
+    fun stopPlayback() {
+        scope.launch {
+            engineMutex.withLock {
+                audioTrack?.run {
+                    if (playState == AudioTrack.PLAYSTATE_PLAYING) {
+                        pause()
+                        flush()
+                    }
                 }
-                release()
+                _isSpeaking.value = false
+                _audioEnergy.value = 0f
             }
-        } catch (e: Exception) {
-            Log.w("PiperOnnxEngine", "Error stopping AudioTrack: ${e.message}")
         }
-        currentAudioTrack = null
-        _isSpeaking.value = false
     }
 
-    /**
-     * Generates PCM 16-bit audio samples using lightweight VITS acoustic modeling,
-     * conditioned by language-specific prosodic curves and cadence.
-     */
-    private fun synthesizePcm(
-        text: String,
-        modelFile: File?,
-        pitch: Float,
-        speechRate: Float,
-        languageCode: String
-    ): ShortArray {
-        val lang = languageCode.lowercase()
-        // Language-specific prosodic offsets and cadence characteristics
-        val (langPitchOffset, langProsodyFreq, durationFactor) = when {
-            lang.startsWith("ja") -> Triple(18.0, 2.4, 0.048) // Japanese mora-timed, higher melodic contour
-            lang.startsWith("es") -> Triple(10.0, 2.1, 0.050) // Spanish syllable-timed, lively prosody
-            lang.startsWith("fr") -> Triple(6.0, 1.7, 0.052)  // French smooth cadence, liaison
-            lang.startsWith("de") -> Triple(-5.0, 1.5, 0.056) // German firm onset, grounded cadence
-            lang.startsWith("ko") -> Triple(12.0, 2.2, 0.049) // Korean syllable-timed melodic flow
-            lang.startsWith("it") -> Triple(14.0, 2.3, 0.051) // Italian expressive musical prosody
-            else -> Triple(0.0, 1.8, 0.055)                   // English stress-timed rhythm
+    suspend fun loadModelIfNeeded(profile: VoiceProfile): Boolean = withContext(Dispatchers.IO) {
+        engineMutex.withLock {
+            if (loadedProfileId == profile.id) return@withLock true
+            val onnxFile = File(profile.onnxFilePath)
+            val jsonFile = File(profile.jsonConfigPath)
+            if (!onnxFile.exists() || !jsonFile.exists()) return@withLock false
+
+            // Initialize or swap your sherpa-onnx / onnxruntime session here
+            ensureAudioTrack(profile.sampleRate)
+            loadedProfileId = profile.id
+            true
         }
-
-        // Voice characteristics influenced by model checkpoint and language
-        val baseF0 = ((145.0 + langPitchOffset) + ((modelFile?.name?.hashCode() ?: 0) % 30)) * pitch
-        val durationPerChar = (durationFactor / speechRate.coerceIn(0.5f, 2.0f))
-        val totalDuration = (text.length * durationPerChar).coerceIn(0.8, 12.0)
-        val totalSamples = (SAMPLE_RATE * totalDuration).toInt()
-        val buffer = ShortArray(totalSamples)
-
-        val words = text.split(" ")
-        val phonemePeriod = totalSamples / words.size.coerceAtLeast(1)
-
-        for (i in 0 until totalSamples) {
-            val t = i.toDouble() / SAMPLE_RATE
-            val envelope = (sin(PI * (i.toDouble() / totalSamples))).coerceAtLeast(0.0)
-
-            // VITS fundamental pitch curve with language-attuned prosodic cadence
-            val prosody = sin(2.0 * PI * langProsodyFreq * t) * 6.5
-            val f0 = baseF0 + prosody
-
-            // Acoustic harmonics
-            val h1 = sin(2.0 * PI * f0 * t)
-            val h2 = 0.45 * sin(2.0 * PI * (f0 * 2.0) * t)
-            val h3 = 0.22 * sin(2.0 * PI * (f0 * 3.0) * t)
-            val breath = (Random.nextFloat() * 2f - 1f) * 0.04
-
-            // Articulation amplitude
-            val wordEnvelope = 0.75 + 0.25 * sin(2.0 * PI * (i % phonemePeriod) / phonemePeriod)
-            val raw = (h1 + h2 + h3 + breath) * envelope * wordEnvelope
-
-            buffer[i] = (raw * 20000.0).toInt().coerceIn(-32767, 32767).toShort()
-        }
-
-        return buffer
     }
 
-    private suspend fun playPcmStream(pcmSamples: ShortArray) = withContext(Dispatchers.IO) {
+    private fun ensureAudioTrack(sampleRate: Int) {
+        if (audioTrack != null && currentSampleRate == sampleRate) return
+        audioTrack?.release()
+        currentSampleRate = sampleRate
+
         val minBufferSize = AudioTrack.getMinBufferSize(
-            SAMPLE_RATE,
-            CHANNEL_CONFIG,
-            AUDIO_FORMAT
-        ).coerceAtLeast(pcmSamples.size * 2)
+            sampleRate,
+            AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        ).coerceAtLeast(4096)
 
-        val audioTrack = AudioTrack.Builder()
+        audioTrack = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setUsage(AudioAttributes.USAGE_ASSISTANT)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
             .setAudioFormat(
                 AudioFormat.Builder()
-                    .setEncoding(AUDIO_FORMAT)
-                    .setSampleRate(SAMPLE_RATE)
-                    .setChannelMask(CHANNEL_CONFIG)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                     .build()
             )
-            .setBufferSizeInBytes(minBufferSize)
+            .setBufferSizeInBytes(minBufferSize * 2)
             .setTransferMode(AudioTrack.MODE_STREAM)
             .build()
+    }
 
-        currentAudioTrack = audioTrack
+    private suspend fun synthesizeAndPlayInternal(text: String, profile: VoiceProfile) {
+        if (!loadModelIfNeeded(profile)) return
 
-        try {
-            audioTrack.play()
-            val chunkSize = 2048
-            var offset = 0
-            while (offset < pcmSamples.size && isActive) {
-                val length = (pcmSamples.size - offset).coerceAtMost(chunkSize)
-                audioTrack.write(pcmSamples, offset, length)
-                offset += length
-            }
-        } finally {
-            try {
-                audioTrack.stop()
-                audioTrack.release()
-            } catch (e: Exception) {
-                // Ignore cleanup error
-            }
-            if (currentAudioTrack == audioTrack) {
-                currentAudioTrack = null
+        withContext(Dispatchers.IO) {
+            engineMutex.withLock {
+                _isSpeaking.value = true
+                val track = audioTrack ?: return@withLock
+                track.play()
+
+                // Stream synthesized PCM chunks (hook your native ONNX inference output here)
+                val pcmSamples = runNativeOnnxInference(text, profile)
+                val chunkSize = 1024
+                var offset = 0
+
+                while (offset < pcmSamples.size && _isSpeaking.value) {
+                    val end = (offset + chunkSize).coerceAtMost(pcmSamples.size)
+                    val chunk = pcmSamples.copyOfRange(offset, end)
+                    track.write(chunk, 0, chunk.size)
+
+                    // Calculate RMS amplitude for smooth UI reactive visualizer
+                    var sumSquares = 0.0
+                    for (sample in chunk) {
+                        val normalized = sample / 32768.0
+                        sumSquares += normalized * normalized
+                    }
+                    val rms = sqrt(sumSquares / chunk.size).toFloat()
+                    _audioEnergy.value = (rms * 3.5f).coerceIn(0f, 1f)
+
+                    offset = end
+                }
+
+                _audioEnergy.value = 0f
+                _isSpeaking.value = false
             }
         }
+    }
+
+    // Replace body with your existing JNI/ONNX tensor execution from PiperOnnxEngine
+    private fun runNativeOnnxInference(text: String, profile: VoiceProfile): ShortArray {
+        return ShortArray(0)
+    }
+
+    fun release() {
+        workerJob?.cancel()
+        audioTrack?.release()
+        audioTrack = null
     }
 }

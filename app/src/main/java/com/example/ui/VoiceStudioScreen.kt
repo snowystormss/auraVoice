@@ -1,225 +1,220 @@
 package com.example.ui
 
-import androidx.compose.animation.*
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-/**
- * Main Container Screen hosting the Bottom Navigation Tabs:
- * 1. Voice Cloner (Reference audio capture, 24kHz transcoding, F5-TTS ODE Preview & 300-sample training)
- * 2. Text Studio (Natural language description-to-voice & iterative text fine-tuning)
- * 3. Voices Library (Management, inline audition, and fine-tuning drawer for saved voices)
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VoiceStudioScreen(viewModel: VoiceViewModel) {
-    val selectedTab by viewModel.selectedTab.collectAsState()
-    val allVoices by viewModel.allVoices.collectAsState()
-    val userVoices = remember(allVoices) { allVoices.filter { !it.isPreset } }
+fun VoiceStudioScreen(
+    viewModel: VoiceViewModel,
+    modifier: Modifier = Modifier
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val audioEnergy by viewModel.audioEnergy.collectAsStateWithLifecycle()
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    // Training Pipeline Telemetry & Overlay
-    val trainingState by viewModel.trainingState.collectAsState()
-    val datasetProgress by viewModel.datasetProgress.collectAsState()
-    val reclaimedMemoryMb by viewModel.reclaimedMemoryMb.collectAsState()
-    val piperProgress by viewModel.piperProgress.collectAsState()
-    val lossHistory by viewModel.lossHistory.collectAsState()
-    val finalTrainedResult by viewModel.finalTrainedResult.collectAsState()
-    val hardwareTelemetry by viewModel.hardwareTelemetry.collectAsState()
+    LaunchedEffect(uiState.errorMessage) {
+        uiState.errorMessage?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.dismissError()
+        }
+    }
 
     Scaffold(
+        modifier = modifier.fillMaxSize(),
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        colors = listOf(Color(0xFFFF4081), Color(0xFF7C4DFF))
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = when (selectedTab) {
-                                    VoiceViewModel.StudioTab.CLONER -> Icons.Default.Mic
-                                    VoiceViewModel.StudioTab.TEXT_STUDIO -> Icons.Default.AutoAwesome
-                                    VoiceViewModel.StudioTab.LIBRARY -> Icons.Default.FolderShared
-                                },
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ReactiveVoiceOrb(
+                            energyProvider = { audioEnergy },
+                            isSpeaking = uiState.isSpeaking
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Aura Voice Studio",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                                color = MaterialTheme.colorScheme.onSurface
+                                text = "auravoice",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = when (selectedTab) {
-                                    VoiceViewModel.StudioTab.CLONER -> "F5-TTS & PIPER CLONING"
-                                    VoiceViewModel.StudioTab.TEXT_STUDIO -> "DESCRIPTION-BASED VOICES"
-                                    VoiceViewModel.StudioTab.LIBRARY -> "SAVED LOCAL PROFILES"
-                                },
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 9.sp,
-                                color = Color(0xFFFF4081),
-                                letterSpacing = 1.1.sp
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    // Quick badge showing total local models
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .background(
-                                        if (userVoices.isNotEmpty()) Color(0xFF00E676) else Color(0xFFFF9100),
-                                        CircleShape
-                                    )
-                            )
-                            Text(
-                                text = "${userVoices.size} Voices",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
+                                text = uiState.activeProfile?.name ?: "no onnx model loaded",
+                                style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
-                )
+                actions = {
+                    AnimatedVisibility(
+                        visible = uiState.isSpeaking,
+                        enter = scaleIn(spring(stiffness = Spring.StiffnessMedium)) + fadeIn(),
+                        exit = scaleOut(spring(stiffness = Spring.StiffnessMedium)) + fadeOut()
+                    ) {
+                        FilledTonalIconButton(
+                            onClick = viewModel::stopSpeaking,
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Stop,
+                                contentDescription = "stop voice playback"
+                            )
+                        }
+                    }
+                }
             )
         },
         bottomBar = {
-            NavigationBar(
-                modifier = Modifier.testTag("bottom_nav_bar")
-            ) {
+            NavigationBar {
                 NavigationBarItem(
-                    selected = selectedTab == VoiceViewModel.StudioTab.CLONER,
-                    onClick = { viewModel.selectTab(VoiceViewModel.StudioTab.CLONER) },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Voice Cloner"
-                        )
-                    },
-                    label = { Text("Cloner") },
-                    modifier = Modifier.testTag("nav_tab_cloner")
+                    selected = selectedTab == 0,
+                    onClick = { selectedTab = 0 },
+                    icon = { Icon(Icons.Rounded.AutoAwesome, contentDescription = null) },
+                    label = { Text("studio chat") }
                 )
-
                 NavigationBarItem(
-                    selected = selectedTab == VoiceViewModel.StudioTab.TEXT_STUDIO,
-                    onClick = { viewModel.selectTab(VoiceViewModel.StudioTab.TEXT_STUDIO) },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.AutoAwesome,
-                            contentDescription = "Text Studio"
-                        )
-                    },
-                    label = { Text("Text Studio") },
-                    modifier = Modifier.testTag("nav_tab_text_studio")
-                )
-
-                NavigationBarItem(
-                    selected = selectedTab == VoiceViewModel.StudioTab.LIBRARY,
-                    onClick = { viewModel.selectTab(VoiceViewModel.StudioTab.LIBRARY) },
-                    icon = {
-                        Icon(
-                            imageVector = Icons.Default.FolderShared,
-                            contentDescription = "Voices Library"
-                        )
-                    },
-                    label = { Text("Library") },
-                    modifier = Modifier.testTag("nav_tab_library")
+                    selected = selectedTab == 1,
+                    onClick = { selectedTab = 1 },
+                    icon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
+                    label = { Text("onnx voices") }
                 )
             }
         }
     ) { innerPadding ->
-        Box(
+        AnimatedContent(
+            targetState = selectedTab,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            // Tab Content
-            when (selectedTab) {
-                VoiceViewModel.StudioTab.CLONER -> {
-                    VoiceClonerPane(
-                        viewModel = viewModel,
-                        modifier = Modifier.fillMaxSize()
+                .padding(innerPadding),
+            transitionSpec = {
+                val direction = if (targetState > initialState) 1 else -1
+                (slideInHorizontally(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow
                     )
-                }
-                VoiceViewModel.StudioTab.TEXT_STUDIO -> {
-                    TextVoiceStudioPane(
-                        viewModel = viewModel,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-                VoiceViewModel.StudioTab.LIBRARY -> {
-                    VoicesLibraryPane(
-                        viewModel = viewModel,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-
-            // ==========================================
-            // TRAINING OVERLAY ("Training, Do Not Exit")
-            // ==========================================
-            if (trainingState == VoiceViewModel.TrainingState.GENERATING_300_SAMPLES ||
-                trainingState == VoiceViewModel.TrainingState.RECLAIMING_MEMORY ||
-                trainingState == VoiceViewModel.TrainingState.PIPER_FINE_TUNING ||
-                trainingState == VoiceViewModel.TrainingState.NAMING_VOICE ||
-                trainingState == VoiceViewModel.TrainingState.COMPLETED
-            ) {
-                TrainingScreen(
-                    state = trainingState,
-                    datasetProgress = datasetProgress,
-                    reclaimedMemoryMb = reclaimedMemoryMb,
-                    piperProgress = piperProgress,
-                    lossHistory = lossHistory,
-                    finalResult = finalTrainedResult,
-                    hardwareTelemetry = hardwareTelemetry,
-                    onSaveVoice = { name, desc -> viewModel.saveClonedVoice(name, desc) },
-                    onCancel = { viewModel.cancelTrainingPipeline() },
-                    onDismissCompleted = { viewModel.dismissCompletedState() }
+                ) { fullWidth -> direction * (fullWidth / 4) } + fadeIn())
+                    .togetherWith(
+                        slideOutHorizontally(
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioNoBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            )
+                        ) { fullWidth -> -direction * (fullWidth / 4) } + fadeOut()
+                    ).using(SizeTransform(clip = false))
+            },
+            label = "pane_transition"
+        ) { tabIndex ->
+            when (tabIndex) {
+                0 -> TextVoiceStudioPane(
+                    uiState = uiState,
+                    onSendPrompt = viewModel::sendPrompt,
+                    onSpeakMessage = viewModel::speakTextDirect
+                )
+                1 -> VoicesLibraryPane(
+                    profiles = uiState.profiles,
+                    onImportVoice = viewModel::importOnnxVoice,
+                    onSelectVoice = viewModel::selectActiveVoice,
+                    onUpdateParameters = viewModel::updateVoiceParameters,
+                    onDeleteVoice = viewModel::deleteVoice
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ReactiveVoiceOrb(
+    energyProvider: () -> Float,
+    isSpeaking: Boolean
+) {
+    val smoothedScale by animateFloatAsState(
+        targetValue = if (isSpeaking) 1f + (energyProvider() * 0.45f) else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessHigh
+        ),
+        label = "orb_scale"
+    )
+
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val tertiaryColor = MaterialTheme.colorScheme.tertiary
+
+    Box(
+        modifier = Modifier.size(36.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = smoothedScale
+                    scaleY = smoothedScale
+                    alpha = if (isSpeaking) 0.9f else 0.35f
+                }
+        ) {
+            drawCircle(
+                color = tertiaryColor.copy(alpha = 0.35f),
+                radius = size.minDimension / 2f
+            )
+            drawCircle(
+                color = primaryColor,
+                radius = size.minDimension / 3.2f
+            )
         }
     }
 }
