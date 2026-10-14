@@ -15,6 +15,7 @@ android {
         isEnable = true
         reset()
         include("arm64-v8a", "armeabi-v7a")
+        abiFilters += listOf("arm64-v8a", "x86_64")
         isUniversalApk = true
       }
   }
