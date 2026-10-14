@@ -16,6 +16,12 @@ interface VoiceProfileDao {
     fun getAllProfiles(): Flow<List<VoiceProfile>>
 
     @Query("SELECT * FROM voice_profiles WHERE isActiveSystemVoice = 1 LIMIT 1")
+    fun getActiveProfileSync(): VoiceProfile?
+
+    @Query("SELECT * FROM voice_profiles ORDER BY addedTimestamp DESC LIMIT 1")
+    fun getFallbackProfileSync(): VoiceProfile?
+
+    @Query("SELECT * FROM voice_profiles WHERE isActiveSystemVoice = 1 LIMIT 1")
     suspend fun getActiveVoice(): VoiceProfile?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
