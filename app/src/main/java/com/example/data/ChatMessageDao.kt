@@ -26,7 +26,11 @@ interface ChatMessageDao {
     suspend fun insertSession(session: ChatSession): Long
 
     @Query("UPDATE chat_sessions SET title = :title, updatedAt = :timestamp WHERE id = :sessionId")
-    suspend fun updateSessionTitleAndTime(sessionId: Long, title: String, timestamp: Long = System.currentTimeMillis())
+    suspend fun updateSessionTitleAndTime(
+        sessionId: Long,
+        title: String,
+        timestamp: Long = System.currentTimeMillis()
+    )
 
     @Query("UPDATE chat_sessions SET updatedAt = :timestamp WHERE id = :sessionId")
     suspend fun touchSession(sessionId: Long, timestamp: Long = System.currentTimeMillis())
@@ -45,7 +49,4 @@ interface ChatMessageDao {
 
     @Insert
     suspend fun insertMessage(message: ChatMessage)
-
-    @Query("DELETE FROM chat_messages")
-    suspend fun clearAll()
 }

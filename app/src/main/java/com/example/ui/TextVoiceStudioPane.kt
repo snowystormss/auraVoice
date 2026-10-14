@@ -1,8 +1,6 @@
 package com.example.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Arrangement
@@ -23,8 +21,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Send
-import androidx.compose.material.icons.rounded.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -110,28 +108,20 @@ fun TextVoiceStudioPane(
             ) {
                 items(
                     items = uiState.messages,
-                    key = { it.id },
-                    contentType = { if (it.isUser) "user" else "bot" }
+                    key = { it.id }
                 ) { msg ->
                     ChatBubble(
                         message = msg,
                         onReplayAudio = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSpeakMessage(msg.text)
-                        },
-                        modifier = Modifier.animateItem(
-                            fadeInSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                            placementSpec = spring(
-                                dampingRatio = Spring.DampingRatioLowBouncy,
-                                stiffness = Spring.StiffnessMediumLow
-                            )
-                        )
+                        }
                     )
                 }
 
                 val liveText = uiState.streamingReply
                 if (!liveText.isNullOrEmpty()) {
-                    item(key = "streaming_bubble", contentType = "stream") {
+                    item(key = "streaming_bubble") {
                         ChatBubble(
                             message = ChatMessage(
                                 id = -1,
@@ -147,9 +137,8 @@ fun TextVoiceStudioPane(
             }
         }
 
-        // Minimalist Floating Pill Input Bar
         Surface(
-            color = MaterialTheme.colorScheme.surfaceContainer,
+            color = MaterialTheme.colorScheme.surfaceVariant,
             shape = RoundedCornerShape(28.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -188,7 +177,7 @@ fun TextVoiceStudioPane(
                     modifier = Modifier.size(40.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.Send,
+                        imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = "send",
                         modifier = Modifier.size(18.dp)
                     )
@@ -214,7 +203,7 @@ private fun ChatBubble(
             color = if (isUser) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceContainer
+                MaterialTheme.colorScheme.surfaceVariant
             },
             contentColor = if (isUser) {
                 MaterialTheme.colorScheme.onPrimaryContainer
@@ -244,10 +233,10 @@ private fun ChatBubble(
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.VolumeUp,
+                            imageVector = Icons.Default.PlayArrow,
                             contentDescription = "speak",
                             tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(17.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
                 }

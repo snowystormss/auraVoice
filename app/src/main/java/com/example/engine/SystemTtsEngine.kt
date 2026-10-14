@@ -15,8 +15,6 @@ class SystemTtsEngine : TextToSpeechService() {
 
     private lateinit var database: AppDatabase
     private lateinit var onnxEngine: PiperOnnxEngine
-
-    // single pre-allocated buffer reused across all system TTS calls to avoid heap churn
     private val reusableByteBuffer = ByteArray(4096)
 
     @Volatile
@@ -64,7 +62,6 @@ class SystemTtsEngine : TextToSpeechService() {
             return
         }
 
-        // convert system speech rate (100 = 1.0x) into Piper's inverse lengthScale
         val rateMultiplier = (request.speechRate / 100f).coerceIn(0.5f, 2.5f)
         val effectiveProfile = profile.copy(
             lengthScale = (profile.lengthScale / rateMultiplier).coerceIn(0.4f, 2.0f)
@@ -80,13 +77,11 @@ class SystemTtsEngine : TextToSpeechService() {
 
         callback.start(effectiveProfile.sampleRate, AudioFormat.ENCODING_PCM_16BIT, 1)
 
-        // split long readouts into sentences so first-word latency is near-instant
         val sentences = TextVoiceParser.cleanForSpeech(rawText)
             .split(Regex("(?<=[.!?])\\s+"))
             .filter { it.isNotBlank() }
 
         val maxChunkBytes = callback.maxBufferSize.coerceAtMost(reusableByteBuffer.size)
-        // ensure even byte count since each 16-bit PCM sample is 2 bytes
         val safeChunkBytes = maxChunkBytes - (maxChunkBytes % 2)
         val samplesPerChunk = safeChunkBytes / 2
 

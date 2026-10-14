@@ -22,7 +22,7 @@ import androidx.room.PrimaryKey
 data class ChatMessage(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val sessionId: Long,
-    val role: String, // "user" or "model"
+    val role: String,
     val text: String,
     val timestamp: Long = System.currentTimeMillis(),
     val voiceId: Int? = null,

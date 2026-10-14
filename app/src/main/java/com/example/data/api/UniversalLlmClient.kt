@@ -13,6 +13,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
 @Immutable
@@ -58,33 +60,35 @@ class UniversalLlmClient {
             if (!response.isSuccessful) {
                 error("http ${response.code}: ${response.message}")
             }
-            val source = response.body?.source() ?: return@use
+            val bodyStream = response.body?.byteStream() ?: return@use
+            BufferedReader(InputStreamReader(bodyStream, Charsets.UTF_8)).use { reader ->
+                var line: String?
+                while (reader.readLine().also { line = it } != null) {
+                    val currentLine = line ?: continue
+                    if (!currentLine.startsWith("data:")) continue
+                    val data = currentLine.removePrefix("data:").trim()
+                    if (data.isEmpty() || data == "[DONE]") continue
 
-            while (!source.exhausted()) {
-                val line = source.readUtf8Line() ?: break
-                if (!line.startsWith("data:")) continue
-                val data = line.removePrefix("data:").trim()
-                if (data.isEmpty() || data == "[DONE]") continue
+                    val token = runCatching {
+                        val json = JSONObject(data)
+                        if (isGeminiNative) {
+                            json.optJSONArray("candidates")
+                                ?.optJSONObject(0)
+                                ?.optJSONObject("content")
+                                ?.optJSONArray("parts")
+                                ?.optJSONObject(0)
+                                ?.optString("text")
+                        } else {
+                            json.optJSONArray("choices")
+                                ?.optJSONObject(0)
+                                ?.optJSONObject("delta")
+                                ?.optString("content")
+                        }
+                    }.getOrNull()
 
-                val token = runCatching {
-                    val json = JSONObject(data)
-                    if (isGeminiNative) {
-                        json.optJSONArray("candidates")
-                            ?.optJSONObject(0)
-                            ?.optJSONObject("content")
-                            ?.optJSONArray("parts")
-                            ?.optJSONObject(0)
-                            ?.optString("text")
-                    } else {
-                        json.optJSONArray("choices")
-                            ?.optJSONObject(0)
-                            ?.optJSONObject("delta")
-                            ?.optString("content")
+                    if (!token.isNullOrEmpty()) {
+                        emit(token)
                     }
-                }.getOrNull()
-
-                if (!token.isNullOrEmpty()) {
-                    emit(token)
                 }
             }
         }

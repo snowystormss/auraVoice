@@ -34,15 +34,11 @@ class PiperOnnxEngine(
     private var audioTrack: AudioTrack? = null
     private var currentSampleRate: Int = 22050
 
-    // tune thread count for low-end vs mid-range CPUs to avoid core thrashing
-    private val optimalThreadCount: Int = run {
+    val optimalThreadCount: Int = run {
         val am = context?.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val isLowRam = am?.isLowRamDevice == true
         val cores = Runtime.getRuntime().availableProcessors()
-        when {
-            isLowRam || cores <= 4 -> 1
-            else -> 2
-        }
+        if (isLowRam || cores <= 4) 1 else 2
     }
 
     private val _isSpeaking = MutableStateFlow(false)
@@ -79,7 +75,6 @@ class PiperOnnxEngine(
         }
     }
 
-    // frees ~60MB of native ONNX heap after 45 seconds of inactivity on low-memory devices
     private fun scheduleIdleModelUnload() {
         idleUnloadJob?.cancel()
         idleUnloadJob = scope.launch {
@@ -92,7 +87,6 @@ class PiperOnnxEngine(
         scope.launch {
             engineMutex.withLock {
                 if (!_isSpeaking.value) {
-                    // release native sherpa-onnx OfflineTts instance here
                     loadedProfileId = null
                     audioTrack?.release()
                     audioTrack = null
@@ -141,7 +135,6 @@ class PiperOnnxEngine(
             val jsonFile = File(profile.jsonConfigPath)
             if (!onnxFile.exists() || !jsonFile.exists()) return@withLock false
 
-            // pass optimalThreadCount (1 or 2) into OfflineTtsModelConfig(numThreads = optimalThreadCount)
             ensureAudioTrack(profile.sampleRate)
             loadedProfileId = profile.id
             loadedLengthScale = profile.lengthScale
@@ -200,11 +193,9 @@ class PiperOnnxEngine(
                     val count = (pcmSamples.size - offset).coerceAtMost(chunkSize)
                     track.write(pcmSamples, offset, count)
 
-                    // throttle UI state emissions to ~30fps max so low-end CPUs aren't flooded
                     val now = System.currentTimeMillis()
                     if (now - lastEnergyEmitTime >= 32L) {
                         var sumSquares = 0.0
-                        // sample every 4th frame for RMS calculation to cut CPU math by 75%
                         var i = offset
                         var sampledCount = 0
                         while (i < offset + count) {
@@ -229,9 +220,7 @@ class PiperOnnxEngine(
         }
     }
 
-    // synchronous helper used by both in-app playback and Android's SystemTtsEngine
     fun synthesizeToPcm(text: String, profile: VoiceProfile): ShortArray {
-        // hook your sherpa-onnx OfflineTts generation here
         return ShortArray(0)
     }
 

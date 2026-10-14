@@ -32,17 +32,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.ChatBubbleOutline
-import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.DarkMode
-import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.LightMode
-import androidx.compose.material.icons.rounded.Menu
-import androidx.compose.material.icons.rounded.Search
-import androidx.compose.material.icons.rounded.Settings
-import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -66,6 +64,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,7 +80,6 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.api.LlmSettings
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -92,7 +90,7 @@ fun VoiceStudioScreen(
     viewModel: VoiceViewModel,
     modifier: Modifier = Modifier
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val uiState by viewModel.uiState.collectAsState()
     var showVoicesSheet by rememberSaveable { mutableStateOf(false) }
     var showApiSheet by rememberSaveable { mutableStateOf(false) }
 
@@ -121,7 +119,6 @@ fun VoiceStudioScreen(
                         .fillMaxHeight()
                         .padding(horizontal = 14.dp, vertical = 16.dp)
                 ) {
-                    // Search & New Chat Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -131,11 +128,11 @@ fun VoiceStudioScreen(
                             value = uiState.searchQuery,
                             onValueChange = viewModel::updateSearchQuery,
                             placeholder = { Text("search chats") },
-                            leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                             trailingIcon = {
                                 if (uiState.searchQuery.isNotEmpty()) {
                                     IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                                        Icon(Icons.Rounded.Close, contentDescription = "clear", modifier = Modifier.size(16.dp))
+                                        Icon(Icons.Default.Close, contentDescription = "clear", modifier = Modifier.size(16.dp))
                                     }
                                 }
                             },
@@ -151,31 +148,22 @@ fun VoiceStudioScreen(
                                 scope.launch { drawerState.close() }
                             }
                         ) {
-                            Icon(Icons.Rounded.Add, contentDescription = "new chat")
+                            Icon(Icons.Default.Add, contentDescription = "new chat")
                         }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // Chat Threads List
                     LazyColumn(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         items(
                             items = uiState.sessions,
-                            key = { it.id },
-                            contentType = { "session" }
+                            key = { it.id }
                         ) { session ->
                             val selected = session.id == uiState.currentSessionId
                             NavigationDrawerItem(
-                                icon = {
-                                    Icon(
-                                        Icons.Rounded.ChatBubbleOutline,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                },
                                 label = {
                                     Text(
                                         text = session.title,
@@ -189,7 +177,7 @@ fun VoiceStudioScreen(
                                         modifier = Modifier.size(26.dp)
                                     ) {
                                         Icon(
-                                            Icons.Rounded.DeleteOutline,
+                                            Icons.Default.Delete,
                                             contentDescription = "delete",
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -204,20 +192,18 @@ fun VoiceStudioScreen(
                                 colors = NavigationDrawerItemDefaults.colors(
                                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                     unselectedContainerColor = MaterialTheme.colorScheme.surface
-                                ),
-                                modifier = Modifier.animateItem()
+                                )
                             )
                         }
                     }
 
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
+                        color = MaterialTheme.colorScheme.outline
                     )
 
-                    // Hamburger Menu Footer: Custom Voices, API Setup, and Theme
                     NavigationDrawerItem(
-                        icon = { Icon(Icons.Rounded.GraphicEq, contentDescription = null) },
+                        icon = { Icon(Icons.Default.Build, contentDescription = null) },
                         label = {
                             Column {
                                 Text("custom voices & system tts", fontWeight = FontWeight.Medium)
@@ -236,7 +222,7 @@ fun VoiceStudioScreen(
                     )
 
                     NavigationDrawerItem(
-                        icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
+                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                         label = {
                             Column {
                                 Text("api & model setup", fontWeight = FontWeight.Medium)
@@ -255,12 +241,7 @@ fun VoiceStudioScreen(
                     )
 
                     NavigationDrawerItem(
-                        icon = {
-                            Icon(
-                                if (uiState.isDarkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                contentDescription = null
-                            )
-                        },
+                        icon = { Icon(Icons.Default.Star, contentDescription = null) },
                         label = {
                             Text(if (uiState.isDarkTheme) "switch to cream light" else "switch to espresso dark")
                         },
@@ -291,7 +272,7 @@ fun VoiceStudioScreen(
                                 scope.launch { drawerState.open() }
                             }
                         ) {
-                            Icon(Icons.Rounded.Menu, contentDescription = "menu")
+                            Icon(Icons.Default.Menu, contentDescription = "menu")
                         }
                     },
                     title = {
@@ -331,11 +312,11 @@ fun VoiceStudioScreen(
                                     viewModel.stopSpeaking()
                                 }
                             ) {
-                                Icon(Icons.Rounded.Stop, contentDescription = "stop speaking")
+                                Icon(Icons.Default.Close, contentDescription = "stop speaking")
                             }
                         }
                         IconButton(onClick = viewModel::startNewChat) {
-                            Icon(Icons.Rounded.Add, contentDescription = "new chat")
+                            Icon(Icons.Default.Add, contentDescription = "new chat")
                         }
                     }
                 )
@@ -355,7 +336,6 @@ fun VoiceStudioScreen(
         }
     }
 
-    // Custom Voices & System TTS Sheet (opened from Hamburger Menu)
     if (showVoicesSheet) {
         ModalBottomSheet(
             onDismissRequest = { showVoicesSheet = false },
@@ -376,7 +356,6 @@ fun VoiceStudioScreen(
         }
     }
 
-    // Minimal 3-Box API & Model Sheet
     if (showApiSheet) {
         LlmSettingsBottomSheet(
             currentSettings = uiState.llmSettings,
@@ -484,7 +463,7 @@ fun ReactiveVoiceOrb(
     isSpeaking: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val rawEnergy by audioEnergyFlow.collectAsStateWithLifecycle()
+    val rawEnergy by audioEnergyFlow.collectAsState()
 
     val smoothedEnergy by animateFloatAsState(
         targetValue = if (isSpeaking) rawEnergy else 0f,

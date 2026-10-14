@@ -30,10 +30,6 @@ class VoiceRepository(
         chatDao.updateSessionTitleAndTime(sessionId, title)
     }
 
-    suspend fun touchSession(sessionId: Long) = withContext(Dispatchers.IO) {
-        chatDao.touchSession(sessionId)
-    }
-
     suspend fun deleteSession(session: ChatSession) = withContext(Dispatchers.IO) {
         chatDao.deleteSession(session)
     }

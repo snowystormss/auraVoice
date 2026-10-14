@@ -182,7 +182,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (activeVoice != null) {
                     onnxEngine.enqueueSpeech(promptText, activeVoice)
                 } else {
-                    _errorMessage.value = "add an api key in menu -> api setup, or load a custom voice"
+                    _errorMessage.value = "open the menu (top left) to set your api link or load a custom .onnx voice"
                 }
                 _isGenerating.value = false
                 return@launch

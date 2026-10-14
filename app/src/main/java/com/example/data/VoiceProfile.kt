@@ -1,21 +1,43 @@
 package com.example.data
 
-import androidx.compose.runtime.Immutable
-import androidx.room.Entity
-import androidx.room.PrimaryKey
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Transaction
+import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
 
-@Immutable
-@Entity(tableName = "voice_profiles")
-data class VoiceProfile(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val name: String,
-    val onnxFilePath: String,
-    val jsonConfigPath: String,
-    val sampleRate: Int = 22050,
-    val speakerId: Int = 0,
-    val lengthScale: Float = 1.0f, // controls speed (lower = faster)
-    val noiseScale: Float = 0.667f, // controls expressiveness
-    val noiseW: Float = 0.8f,
-    val isActiveSystemVoice: Boolean = false,
-    val addedTimestamp: Long = System.currentTimeMillis()
-)
+@Dao
+interface VoiceProfileDao {
+    @Query("SELECT * FROM voice_profiles ORDER BY isActiveSystemVoice DESC, addedTimestamp DESC")
+    fun getAllProfiles(): Flow<List<VoiceProfile>>
+
+    @Query("SELECT * FROM voice_profiles WHERE isActiveSystemVoice = 1 LIMIT 1")
+    fun getActiveProfileSync(): VoiceProfile?
+
+    @Query("SELECT * FROM voice_profiles ORDER BY addedTimestamp DESC LIMIT 1")
+    fun getFallbackProfileSync(): VoiceProfile?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(profile: VoiceProfile): Long
+
+    @Update
+    suspend fun update(profile: VoiceProfile)
+
+    @Delete
+    suspend fun delete(profile: VoiceProfile)
+
+    @Query("UPDATE voice_profiles SET isActiveSystemVoice = 0")
+    suspend fun clearActiveFlags()
+
+    @Query("UPDATE voice_profiles SET isActiveSystemVoice = 1 WHERE id = :profileId")
+    suspend fun markActive(profileId: Long)
+
+    @Transaction
+    suspend fun setActiveVoiceTransaction(profileId: Long) {
+        clearActiveFlags()
+        markActive(profileId)
+    }
+}

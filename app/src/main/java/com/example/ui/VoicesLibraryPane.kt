@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -23,12 +22,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.CheckCircle
-import androidx.compose.material.icons.rounded.DeleteOutline
-import androidx.compose.material.icons.rounded.FilePresent
-import androidx.compose.material.icons.rounded.PhoneAndroid
-import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -92,19 +90,18 @@ fun VoicesLibraryPane(
                 onClick = { showImporter = !showImporter },
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Icon(Icons.Rounded.Add, contentDescription = null)
+                Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(if (showImporter) "cancel" else "add voice")
             }
         }
 
-        // One-tap shortcut to set AuraVoice as the Android system-wide voice
         OutlinedButton(
             onClick = onOpenSystemTtsSettings,
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(Icons.Rounded.PhoneAndroid, contentDescription = null)
+            Icon(Icons.Default.Settings, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
             Text("set as android system voice")
         }
@@ -182,22 +179,20 @@ private fun InlineOnnxImporter(
                     onClick = { onnxPicker.launch(arrayOf("*/*")) },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        if (onnxUri != null) Icons.Rounded.CheckCircle else Icons.Rounded.FilePresent,
-                        contentDescription = null
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    if (onnxUri != null) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
                     Text(if (onnxUri != null) ".onnx ready" else "1. .onnx file")
                 }
                 OutlinedButton(
                     onClick = { jsonPicker.launch(arrayOf("*/*")) },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        if (jsonUri != null) Icons.Rounded.CheckCircle else Icons.Rounded.FilePresent,
-                        contentDescription = null
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    if (jsonUri != null) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null)
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
                     Text(if (jsonUri != null) ".json ready" else "2. .json file")
                 }
             }
@@ -232,7 +227,7 @@ private fun OnnxVoiceCard(
     val speakerId by remember(profile.speakerId) { mutableIntStateOf(profile.speakerId) }
 
     val borderColor by animateColorAsState(
-        targetValue = if (profile.isActiveSystemVoice) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+        targetValue = if (profile.isActiveSystemVoice) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
         label = "border"
     )
 
@@ -247,7 +242,7 @@ private fun OnnxVoiceCard(
             containerColor = if (profile.isActiveSystemVoice) {
                 MaterialTheme.colorScheme.primaryContainer
             } else {
-                MaterialTheme.colorScheme.surfaceContainer
+                MaterialTheme.colorScheme.surfaceVariant
             }
         )
     ) {
@@ -262,7 +257,7 @@ private fun OnnxVoiceCard(
                         Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         if (profile.isActiveSystemVoice) {
                             Icon(
-                                Icons.Rounded.CheckCircle,
+                                Icons.Default.CheckCircle,
                                 contentDescription = "active",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(start = 6.dp)
@@ -277,10 +272,10 @@ private fun OnnxVoiceCard(
                 }
                 Row {
                     IconButton(onClick = { expanded = !expanded }) {
-                        Icon(Icons.Rounded.Tune, contentDescription = "tune")
+                        Icon(Icons.Default.Build, contentDescription = "tune")
                     }
                     IconButton(onClick = onDelete) {
-                        Icon(Icons.Rounded.DeleteOutline, contentDescription = "delete", tint = MaterialTheme.colorScheme.error)
+                        Icon(Icons.Default.Delete, contentDescription = "delete", tint = MaterialTheme.colorScheme.error)
                     }
                 }
             }

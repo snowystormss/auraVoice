@@ -29,11 +29,7 @@ private val CozyDarkColorScheme = darkColorScheme(
     onSurface = WarmParchment,
     surfaceVariant = CozyMochaSurface,
     onSurfaceVariant = MutedLatte,
-    surfaceContainerLow = RoastedBark,
-    surfaceContainer = CozyMochaSurface,
-    surfaceContainerHigh = WarmCocoaContainer,
     outline = DarkWalnutOutline,
-    outlineVariant = DarkWalnutOutline.copy(alpha = 0.6f),
     error = Color(0xFFFFB4AB)
 )
 
@@ -54,11 +50,7 @@ private val CozyLightColorScheme = lightColorScheme(
     onSurface = DeepRoastText,
     surfaceVariant = WarmOatContainer,
     onSurfaceVariant = WarmTaupeSubtext,
-    surfaceContainerLow = AlabasterWhite,
-    surfaceContainer = CozyCreamSurface,
-    surfaceContainerHigh = WarmOatContainer,
     outline = CreamOutline,
-    outlineVariant = CreamOutline.copy(alpha = 0.6f),
     error = Color(0xFFBA1A1A)
 )
 
@@ -73,8 +65,8 @@ fun AuraVoiceTheme(
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            window.statusBarColor = colorScheme.surface.toArgb()
-            window.navigationBarColor = colorScheme.surface.toArgb()
+            window.statusBarColor = colorScheme.background.toArgb()
+            window.navigationBarColor = colorScheme.background.toArgb()
             val controller = WindowCompat.getInsetsController(window, view)
             controller.isAppearanceLightStatusBars = !darkTheme
             controller.isAppearanceLightNavigationBars = !darkTheme
@@ -90,6 +82,7 @@ fun AuraVoiceTheme(
 
 @Composable
 fun MyApplicationTheme(
+    themePalette: String = "",
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
