@@ -1,30 +1,38 @@
-# Real-Time System Hardware Monitor & 100% Pop Transition to Library
+# Piper Voice ZIP Importer, Architecture Info Guide & Advanced Flag Customizer
 
-This plan details the integration of a real-time hardware telemetry HUD on the voice training screen and a celebratory 100% completion animation. During F5-TTS sample generation and Piper ONNX fine-tuning, the monitor provides real-time visibility into CPU utilization percentage, used RAM out of total system RAM, overall completion percentage, live animated gauges, and an immediate training abort/cancel button. When training reaches 100%, an animated resizing and fading "pop" spring transition plays, automatically carrying the user straight into the **Voices Library** tab with their newly trained voice ready.
+This plan details the implementation of a single-file `.ZIP` package importer for Piper TTS voice models, a clear architecture info guide popup, and a comprehensive two-tier voice tuning interface that exposes both core sliders and deep Piper runtime flags.
+
+---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following product behaviors and requested refinements have been incorporated:
-> - **Confirmed: 100% Completion Pop Animation & Auto-Navigation**: When overall training reaches 100%, the completion card plays a spring-loaded scale and fade "pop" animation (`scaleIn(spring(dampingRatio = Bouncy))` + `fadeIn()` followed by `scaleOut()` + `fadeOut()`), seamlessly switching the main tab to `VoiceViewModel.StudioTab.LIBRARY` and closing the training modal.
-> - **Confirmed: Live Display During Training**: The hardware monitor is actively displayed directly on `TrainingScreen` during all active training stages (`GENERATING_300_SAMPLES`, `RECLAIMING_MEMORY`, and `PIPER_FINE_TUNING`).
-> - **Confirmed: Live Hardware Gauges & Metrics**:
->   1. **Live CPU Percentage**: Displays real-time compute load with a color-coded strain gauge (Cyan, Amber, Red).
->   2. **Used RAM Out of Total System RAM**: Formatted as `X.XX GB / Y.YY GB (Z%)` with peak consumption tracking via Android `ActivityManager.MemoryInfo`.
->   3. **Overall Completion Percentage**: Unified 0%–100% gauge tracking sample generation (0%–65%), memory reclamation (65%–75%), and Piper epoch training (75%–100%).
-> - **Confirmed: Immediate Cancel & Abort Action**: A prominent Cancel button in the telemetry card that immediately halts running coroutines, unloads heavy model memory, deletes temporary batch files, and reverts state to `AUDIO_READY`.
-> - **Confirmed: Strictly No Emojis**: All metrics, badges, gauges, and animations use Material Design vector icons (`Icons.Default.Memory`, `Icons.Default.Speed`, `Icons.Default.Timer`, `Icons.Default.CheckCircle`, `Icons.Default.Cancel`) with clean monospace figures and zero emojis.
+> The following user-confirmed requirements and technical specifications have been finalized:
+> - **Confirmed: Single `.ZIP` File Import**: Instead of picking two separate files manually, users select a single `.zip` file containing both the Piper model (`<model>.onnx`) and its matching config (`<model>.onnx.json`). The app unpacks the archive, validates the files, extracts metadata (sample rate, speaker list), and stores them cleanly in internal app storage.
+> - **Confirmed: Architecture Info Popup ("i" Circle Icon)**: A circular information icon (`Icons.Default.Info`) is placed prominently next to the voice importer. Tapping it opens an informative dialog explaining:
+>   - Supported model architecture: VITS / Piper ONNX
+>   - Required file pair: `<name>.onnx` and `<name>.onnx.json` inside the `.zip`
+>   - Compatible sample rates: 16,000 Hz, 22,050 Hz, and 24,000 Hz
+>   - Phoneme compatibility: espeak-ng phonemizer
+> - **Confirmed: Two-Tier Tuning Controls**:
+>   - **Tier 1 (Core Controls)**: Speed (`length_scale`), Expressiveness (`noise_scale`), Noise Width (`noise_w`), and Speaker Selection (for multi-speaker models).
+>   - **Tier 2 (Expandable Advanced Flags)**: An "Advanced Options" toggle that exposes the actual underlying Piper synthesis flags:
+>     - Sentence Pause (`sentence_silence_seconds`): pause length after `.`, `!`, `?`
+>     - Sub-sentence Pause (`phoneme_silence` / comma pause): pause length after `,`, `;`, `:`
+>     - Output Gain (`volume_scale`): speech amplitude multiplier
+>     - CPU Inference Threads: 1 vs 2 threads for battery vs latency optimization
+> - **Confirmed: UI & Theme Preservation**: Retains the current chat-first layout, minimal floating input pill, hamburger navigation drawer, and cozy espresso dark / cream light theme tokens in `com.example.ui`. No deleted files are restored.
 
 ---
 
 ## 1. Overview & Core Concept
 
 - **What It Does**:
-  Provides an on-screen hardware telemetry dashboard during voice model fine-tuning. Users can observe real-time strain on their device processor (CPU %) and physical memory (Used RAM / Total RAM), track overall progress toward completion, cancel at any time, and enjoy a smooth, bouncy "pop" transition straight to the Voices Library when training finishes.
+  Streamlines custom Piper voice installation by accepting a single `.zip` archive containing both the `.onnx` neural model and `.onnx.json` config. Users can inspect the exact architectural requirements via an on-screen info dialog and fine-tune their active voice through an intuitive dual-level tuning panel.
 - **Target Audience / Persona**:
-  Users and creators running on-device generative voice synthesis who want clear hardware visibility and an effortless transition into testing their newly created voice model.
+  Users running high-quality, fully offline local voice synthesis on Android who want effortless voice model imports and granular control over TTS prosody, cadence, and pause pacing.
 - **Key Value**:
-  Combines industrial hardware transparency with delight: users see hardware strain during generation, and upon reaching 100%, are smoothly propelled straight into their voice library.
+  Eliminates the friction and confusion of multi-file selection while providing transparent model requirements and full customization over Piper's native inference flags.
 
 ---
 
@@ -32,63 +40,55 @@ This plan details the integration of a real-time hardware telemetry HUD on the v
 
 ### Key User Flows
 
-1. **Initiating Training & HUD Activation**:
-   - The user taps **Commit & Train Model** in the Voice Cloner.
-   - `TrainingScreen` opens as a full-screen workstation dialog.
-   - The **Real-Time Hardware Monitor HUD** appears at the top, immediately sampling hardware metrics.
+1. **Viewing Architecture Info**:
+   - The user opens the **Custom Voices & System TTS** bottom sheet from the hamburger menu.
+   - Next to the **Add Voice** button, an information icon (`Icons.Default.Info`) is visible.
+   - Tapping the icon displays the **Piper Model Requirements** dialog outlining file formats, sample rates, and packaging guidance.
 
-2. **Monitoring Live Gauges During Generation**:
-   - **CPU Gauge**: Displays fluctuating load (e.g. `82.4%`) with a horizontal gauge bar that shifts from Cyan (`#00E5FF`) to Amber (`#FFB300`) under high compute strain.
-   - **RAM Gauge**: Displays physical RAM utilization (e.g. `3.28 GB / 6.00 GB (54%)`) alongside JVM app heap usage.
-   - **Overall Progress**: Displays total progress percentage (e.g. `45% Complete`) along with estimated time remaining and batch index.
+2. **Importing a Voice Model (.ZIP)**:
+   - The user taps **Add Voice**.
+   - An inline import card prompts for a friendly voice name and a **Select .ZIP Package** action.
+   - The user selects `en_US-lessac-medium.zip` via the Android file picker.
+   - The app extracts the ZIP stream via `ZipInputStream`, validates that both `.onnx` and `.onnx.json` exist, reads sample rate and speaker count from the JSON config, and saves the new profile into the Room database.
+   - The imported voice immediately appears in the list and can be activated with a single tap.
 
-3. **Reaching 100% & Pop Transition to Library**:
-   - As Piper fine-tuning hits the final epoch, overall progress hits `100%`.
-   - The dialog triggers the **Completion Pop Sequence**:
-     - A celebratory badge expands with a spring overshoot bounce (`scaleIn(spring(dampingRatio = 0.55f, stiffness = 400f))`).
-     - A brief 900ms visual celebration displays "Training Complete! Model Ready".
-     - The modal smoothly scales down and fades out, automatically selecting `StudioTab.LIBRARY` in the main container.
-     - The user arrives in the Voices Library with their new model active and selected.
+3. **Customizing Voice Flags & Advanced Parameters**:
+   - The user taps the **Tune** icon (`Icons.Default.Build`) on any voice card.
+   - **Primary Sliders** are presented immediately:
+     - Speed / Pace (`length_scale` from 0.5x to 2.0x)
+     - Expressiveness (`noise_scale` from 0.1 to 1.2)
+     - Noise Width / Rhythm (`noise_w` from 0.1 to 1.2)
+     - Speaker ID selector (if multi-speaker model)
+   - Tapping **Advanced Options (Piper Flags)** reveals:
+     - Sentence Pause duration (`0.0s` to `1.0s`, default `0.2s`)
+     - Comma / Sub-phrase Pause duration (`0.0s` to `0.5s`, default `0.08s`)
+     - Volume Gain (`0.5x` to `1.5x`, default `1.0x`)
+     - CPU Inference Thread Count (1 or 2 threads)
+   - Parameter adjustments take effect immediately in both in-app streaming playback and Android's `SystemTtsEngine`.
 
-4. **Aborting Training**:
-   - The user taps **Abort Training** on the HUD card.
-   - A confirmation dialog prompts the user ("Discard current progress and reclaim memory?").
-   - Confirming cancels the worker job, invokes `f5TtsEngine.terminateAndReclaimMemory()`, deletes intermediate audio cache, and safely returns to `AUDIO_READY`.
+### Visual Identity & Theme Alignment
 
-### Visual Identity & Theme
-
-- **Aesthetic Direction**: High-tech audio synthesizer diagnostics console with dark slate container cards (`#121622`), glowing telemetry lines, and monospace numerical readings.
-- **Animation Design**:
-  - `scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium))`
-  - `fadeIn(animationSpec = tween(250))`
-  - Auto-dismiss transition with `scaleOut(tween(300))` + `fadeOut(tween(250))`
-- **Iconography (Strictly No Emojis)**:
-  - `Icons.Default.Speed`: CPU processing load
-  - `Icons.Default.Memory`: System physical RAM & heap
-  - `Icons.Default.Timer`: Pipeline completion percentage
-  - `Icons.Default.CheckCircle`: 100% success badge
-  - `Icons.Default.Close` / `Icons.Default.Cancel`: Abort action
-  - `Icons.Default.FolderShared`: Library destination badge
+- **Theme Consistency**: Uses `Theme.AuraVoice` tokens:
+  - Dark Mode: `EspressoBlack` (`#0C0907`), `CozyMochaSurface` (`#221A14`), `ToastedCaramel` (`#D6A271`)
+  - Light Mode: `AlabasterWhite` (`#FFFDF9`), `CozyCreamSurface` (`#F6F0E4`), `RichEspressoPrimary` (`#5C3A21`)
+- **Component Geometry**: Rounded corners (`16.dp` to `20.dp`) for cards and dialogs matching the chat bubbles and search pill.
+- **Iconography**: Clean filled Material 3 vector icons (`Icons.Default.Info`, `Icons.Default.Build`, `Icons.Default.CheckCircle`, `Icons.Default.PlayArrow`).
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: 100% Pop Animation & Auto-Navigation**
-  - *Chosen Approach*: When progress reaches 100%, animate a spring scale/fade "pop" celebration for under a second, then immediately dismiss the dialog and navigate to `StudioTab.LIBRARY`.
-  - *Why*: Eliminates tedious manual clicks to exit the training dialog and takes the user immediately to the destination where their voice is ready to be played, edited, or exported.
-  - *Alternatives Considered*: Requiring the user to tap "Done" manually was considered, but disrupts the flow of creation.
+- **Decision 1: ZIP Archive Extraction vs. Dual File Pickers**
+  - *Chosen Approach*: Accept a single `.zip` file, extracting its contents into `context.filesDir/voices/<voice_id>/` in a background I/O coroutine.
+  - *Why*: Piper voices distributed on HuggingFace and GitHub are typically packaged as `.zip` or `.tar.gz` archives containing both `<model>.onnx` and `<model>.onnx.json`. A single ZIP picker prevents mismatched file pairing and simplifies the import flow.
+  - *Alternatives Considered*: Requiring separate picks for `.onnx` and `.json` was confusing to users and prone to mismatched configurations.
 
-- **Decision 2: System RAM vs. Process Heap**
-  - *Chosen Approach*: Display both Total System RAM (`ActivityManager.MemoryInfo.availMem` & `totalMem`) and App Heap memory.
-  - *Why*: Users asked specifically for "used ram out of total system ram" to know if their entire phone is under memory pressure or close to an Out-Of-Memory termination.
+- **Decision 2: Expandable "Advanced Options" Section**
+  - *Chosen Approach*: Keep the primary card clean with 3 core sliders and a speaker picker, and place pause durations, volume scale, and thread count behind an expandable section.
+  - *Why*: Prevents visual clutter for everyday users while giving power users access to all actual Piper runtime parameters.
 
-- **Decision 3: Unified Overall Percentage vs. Stage-only Percentage**
-  - *Chosen Approach*: Compute a weighted composite progress percentage:
-    - Stage 1 (300 Samples): 0%–65%
-    - Stage 2 (RAM Reclaim): 65%–75%
-    - Stage 3 (Piper Tuning): 75%–100%
-  - *Why*: Provides the user with a single cohesive progress meter indicating when the entire session will reach 100%.
+- **Decision 3: Room Database Schema Evolution**
+  - *Chosen Approach*: Update `VoiceProfile` entity with default values for new fields (`sentenceSilenceSec`, `phonemeSilenceSec`, `volumeScale`) and increment Room database version with destructive fallback for seamless local upgrades.
 
 ---
 
@@ -96,51 +96,67 @@ This plan details the integration of a real-time hardware telemetry HUD on the v
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     TrainingScreen.kt                           │
+│                     VoicesLibraryPane.kt                        │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │ RealTimeSystemMonitorCard                                 │  │
-│  │   • Live CPU Gauge: [====      ] 78.4%                    │  │
-│  │   • RAM Gauge: [========    ] 3.2 GB / 6.0 GB (53%)       │  │
-│  │   • Total Completion: [=====       ] 48%                  │  │
-│  │   • [Cancel & Abort Training]                             │  │
+│  │ Header: "Custom .ONNX Voices"  [ (i) Info ]  [ Add Voice ] │  │
 │  └───────────────────────────────────────────────────────────┘  │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │ PopCelebrationOverlay (Triggers at 100%)                  │  │
-│  │   • Bouncy Spring ScaleIn + FadeIn                        │  │
-│  │   • Auto-dismiss -> switch to StudioTab.LIBRARY           │  │
+│  │ Architecture Info Dialog (triggered by (i) icon)          │  │
+│  │   • VITS / Piper ONNX requirements                        │  │
+│  │   • .onnx + .onnx.json packaging guide                    │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ Inline Zip Importer (ZipInputStream -> filesDir)          │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │ OnnxVoiceCard                                             │  │
+│  │   ├── Tier 1: Speed, Expressiveness, Noise Width, Speaker │  │
+│  │   └── Tier 2: [▼ Advanced Piper Flags]                   │  │
+│  │         • Sentence Silence (sec)                          │  │
+│  │         • Comma Silence (sec)                             │  │
+│  │         • Volume Gain                                     │  │
+│  │         • CPU Thread Allocation (1 or 2)                  │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └────────────────────────────────┬────────────────────────────────┘
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                       VoiceViewModel                            │
-│  • hardwareTelemetry: StateFlow<HardwareTelemetry>              │
-│  • cancelTrainingPipeline() -> terminates and discards cache    │
-│  • selectTab(StudioTab.LIBRARY) on 100% completion              │
+│                     VoiceViewModel.kt                           │
+│  • importVoiceFromZip(context, name, zipUri)                    │
+│  • updateVoiceParameters(profile, length, noise, noiseW, ...)   │
+│  • updateAdvancedVoiceFlags(profile, sentenceSilence, ...)      │
 └────────────────────────────────┬────────────────────────────────┘
                                  │
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                 HardwareTelemetryMonitor.kt                     │
-│  • ActivityManager.MemoryInfo (usedRam, totalRam)               │
-│  • Process CPU sampling with EMA smoothing                      │
-│  • Pipeline composite completion calculation (0..100%)          │
+│              AppDatabase (Room) & PiperOnnxEngine               │
+│  • VoiceProfile (schema updated with advanced pause flags)      │
+│  • PiperOnnxEngine applies flags to synthesis & sentence split  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Data Model & State Updates
+### Component & File Mapping
 
-- **`HardwareTelemetry.kt`**:
-  - `cpuPercentage: Float` (0f–100f)
-  - `usedRamBytes: Long`, `totalRamBytes: Long`, `ramPercent: Float`
-  - `heapUsedBytes: Long`
-  - `overallProgressPercent: Float` (0f–100f)
-  - `estimatedRemainingSec: Int`
-- **`HardwareTelemetryMonitor.kt`**:
-  - Lifecycle-aware sampling loop running in a background coroutine while training is active.
-- **`VoiceViewModel.kt`**:
-  - Exposes `hardwareTelemetry: StateFlow<HardwareTelemetry>`.
-  - In `saveClonedVoice()`, upon model commit and reaching 100%, triggers the auto-transition to `StudioTab.LIBRARY`.
-- **`TrainingScreen.kt`**:
-  - Adds `RealTimeSystemMonitorCard` with CPU gauge, RAM gauge, overall completion progress, and cancel button.
-  - Implements the pop animation transition sequence when completion hits 100%.
+1. **`com.example.data.VoiceProfile.kt`**:
+   - Add fields:
+     - `sentenceSilenceSec: Float = 0.2f`
+     - `phonemeSilenceSec: Float = 0.08f`
+     - `volumeScale: Float = 1.0f`
+2. **`com.example.data.AppDatabase.kt`**:
+   - Increment database version to 7 (with `fallbackToDestructiveMigration(dropAllTables = true)`).
+3. **`com.example.data.VoiceRepository.kt` & `VoiceProfileDao.kt`**:
+   - Maintain queries and update methods to persist updated parameters.
+4. **`com.example.engine.PiperOnnxEngine.kt`**:
+   - Apply `sentenceSilenceSec` and `phonemeSilenceSec` in sentence parsing and PCM playback pacing.
+5. **`com.example.ui.VoiceViewModel.kt`**:
+   - Implement `importVoiceFromZip(context, name, zipUri)` using `ZipInputStream`:
+     - Creates destination folder `context.filesDir/voices/<timestamp>/`.
+     - Extracts all entries; finds `.onnx` and `.json`.
+     - Parses JSON to read `audio.sample_rate`, `num_speakers`, and defaults.
+     - Saves new `VoiceProfile` record to Room.
+   - Implement `updateVoiceParameters(...)` supporting both core and advanced flags.
+6. **`com.example.ui.VoicesLibraryPane.kt`**:
+   - Add circular `(i)` info icon button next to "Add Voice".
+   - Implement `PiperArchitectureInfoDialog` explaining the VITS architecture and packaging specs.
+   - Update `InlineOnnxImporter` to accept `.zip` files via `ActivityResultContracts.OpenDocument()`.
+   - Update `OnnxVoiceCard` with primary sliders and an expandable **Advanced Options** drawer with actual Piper flags.
